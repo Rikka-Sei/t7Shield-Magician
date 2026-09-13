@@ -20,9 +20,7 @@ device:
   model: "Samsung Portable SSD T7 Shield"
   vid_pid: "VID:PID"
   node: "Device node"
-  channel: "Platform channel"
-  channel_macos: "IOKit read-only descriptor scouting"
-  channel_linux: "SCSI generic device node (SG_IO)"
+  channel: "SCSI generic device node (SG_IO)"
   descriptor_bot: "Alternate setting proto 0x50 (BOT)"
   descriptor_uas: "Alternate setting proto 0x62 (UAS)"
   descriptor_endpoints: "Endpoints"
@@ -44,7 +42,6 @@ reason:
   evidence_gap: "The byte-level sequence for password writes (set/change/delete) is not yet proven; this action is unavailable"
   reenumerating: "The device is re-enumerating; wait for the observation window to end"
   not_locked: "The device is not in the locked state, so unlocking is unnecessary"
-  platform_unavailable: "No usable SCSI channel on this platform (a proven limitation on macOS)"
   unrecognized: "No T7 Shield found; the action entries stay disabled"
   retries_exhausted: "The password was rejected 3 times; close and reopen the dialog before retrying"
 progress:
@@ -73,10 +70,8 @@ password:
   cancel: "Cancel"
   empty: "The password must not be empty"
 platform:
-  macos_notice: "No usable SCSI channel on macOS (a proven platform limitation): the device can be identified but disk operations cannot run: %{issue}"
   linux_notice: "On Linux commands go through the SCSI generic device node; grant read/write access to the node yourself (this tool never escalates privileges)."
 issue:
-  macos_transport: "issues/2026-09-14-macOS传输通道.md"
   password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
   view_title: "Diagnostic records"
@@ -95,8 +90,8 @@ PasswordRejected:
   reason: "The device rejected this password (SCSI status is GOOD, method status byte is 1)"
   advice: "Check the password and submit again; after 3 rejections reopen the dialog"
 TransportUnavailable:
-  reason: "No usable SCSI channel on this platform (a proven limitation on macOS)"
-  advice: "Run disk operations on Linux; macOS only supports read-only descriptor scouting"
+  reason: "No usable SCSI channel on this platform"
+  advice: "Run disk operations on Linux"
 DeviceGone:
   reason: "The device node disappeared during the operation (it may be re-enumerating)"
   advice: "Retry after the device finishes re-enumerating"

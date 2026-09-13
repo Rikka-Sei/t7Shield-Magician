@@ -3,8 +3,6 @@
 //! 采样与窗口口径归 `magi-transport`（§6：30 s 窗口、500 ms 间隔、最多 60 次）；判据裁决归
 //! `magi-protocol::evaluate_unlock`（§4.8）。本模块只做两者之间的搬运，不引入新的判据：
 //! 分区表/挂载取窗口内任一采样，PID 取最后一个成功采样的现值。
-//!
-//! macOS 不轮询：平台能力由 [`crate::controller::PlatformCapability`] 裁决，本模块只做纯映射。
 
 use magi_protocol::{evaluate_unlock, ReEnumerationObservation, UnlockEvidence};
 use magi_transport::reenumeration::{

@@ -19,9 +19,7 @@ device:
   model: "Samsung Portable SSD T7 Shield"
   vid_pid: "VID:PID"
   node: "设备节点"
-  channel: "平台通道"
-  channel_macos: "IOKit 只读描述符侦察"
-  channel_linux: "SCSI 通用设备节点（SG_IO）"
+  channel: "SCSI 通用设备节点（SG_IO）"
   descriptor_bot: "备用设置 proto 0x50（BOT）"
   descriptor_uas: "备用设置 proto 0x62（UAS）"
   descriptor_endpoints: "端点"
@@ -43,7 +41,6 @@ reason:
   evidence_gap: "口令写操作（设置/修改/删除）的字节级序列尚未被证实，当前不可执行"
   reenumerating: "设备正在重枚举，请等待观察窗口结束"
   not_locked: "设备当前不是锁定态，无需解锁"
-  platform_unavailable: "当前平台没有可用的 SCSI 通道（macOS 为已证实的平台限制）"
   unrecognized: "未发现 T7 Shield，操作入口保持禁用"
   retries_exhausted: "口令已被拒 3 次，请关闭并重新打开对话框后再试"
 progress:
@@ -72,10 +69,8 @@ password:
   cancel: "取消"
   empty: "口令不能为空"
 platform:
-  macos_notice: "macOS 上无可用 SCSI 通道（已证实平台限制），可识别设备但不能执行盘操作：%{issue}"
   linux_notice: "Linux 上通过 SCSI 通用设备节点下发命令；权限不足时请自行授予节点读写权（本工具不提权）。"
 issue:
-  macos_transport: "issues/2026-09-14-macOS传输通道.md"
   password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
   view_title: "诊断记录"
@@ -94,8 +89,8 @@ PasswordRejected:
   reason: "设备拒绝了该口令（SCSI 状态为 GOOD，方法状态字节为 1）"
   advice: "确认口令后重新提交；连续 3 次被拒后需重新打开对话框"
 TransportUnavailable:
-  reason: "当前平台没有可用的 SCSI 通道（macOS 为已证实的平台限制）"
-  advice: "在 Linux 上使用本工具执行盘操作；macOS 仅支持只读描述符侦察"
+  reason: "当前平台没有可用的 SCSI 通道"
+  advice: "在 Linux 上使用本工具执行盘操作"
 DeviceGone:
   reason: "设备节点在操作期间消失（可能正在重枚举）"
   advice: "等待设备重新枚举完成后重新发起操作"

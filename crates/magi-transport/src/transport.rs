@@ -1,8 +1,8 @@
 //! §4.3 传输层契约：`Transport` trait 与传输层类型（`ScsiCdb` / `Direction` /
 //! `DeviceTarget` / `TransportError`）。本文件是本 crate 的唯一权威定义处，协议层只消费。
 //!
-//! 平台口径（§4.5、D08）：Linux 走 `SG_IO`（`crate::linux`）；macOS 只做只读描述符侦察
-//! （`crate::macos`），任何盘操作立即返回 [`TransportError::Unavailable`]，不重试、不退避、不轮询。
+//! 平台口径（D27）：Linux 走 `SG_IO`（`crate::linux`）；非 Linux 平台上的 `open` 直接返回
+//! [`TransportError::Unavailable`]，其运行时行为不在 spec 管辖。
 
 use std::fmt;
 use std::time::Duration;
@@ -20,17 +20,16 @@ pub enum Direction {
     Out,
 }
 
-/// 传输层目标：Linux 设备节点路径；macOS 只读侦察按 VID/PID 定位设备。
+/// 传输层目标：Linux 设备节点路径。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceTarget {
     LinuxSg(String),
-    MacOsUsb { vid: u16, pid: u16 },
 }
 
 /// 传输层错误（§5）：SCSI 语义错误与平台错误码分列，平台码由 [`TransportError::Platform`] 兜底承载（D18）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransportError {
-    /// 平台通道不存在（macOS 盘操作、通道缺失）：不重试（D08）。
+    /// 非 Linux 平台打开通道、平台通道缺失：不重试（D27）。
     Unavailable,
     /// `open`/`ioctl` 因权限失败（`EACCES`/`EPERM`）：不自身提权。
     PermissionDenied,
@@ -42,7 +41,7 @@ pub enum TransportError {
     ShortResponse { got: usize },
     /// SCSI 状态为 CHECK CONDITION，包装 sense。
     ScsiCheckCondition { sense: SenseData },
-    /// 平台原始错误码（IOKit `kern_return_t`、非 SCSI 语义的完成状态等）；呈现码 `TransportFailure`。
+    /// 非 SCSI 语义的平台原始错误码（如既非 GOOD 也非 CHECK CONDITION 的完成状态）；呈现码 `TransportFailure`。
     Platform { code: i64 },
 }
 

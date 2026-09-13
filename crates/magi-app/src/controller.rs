@@ -4,7 +4,6 @@
 //! - §4.1：锁定态/解锁态按 PID 裁决，非目标 PID 不识别、不发任何命令；
 //! - §4.11/§4.12：口令写入口（设置/修改/删除）受证据缺口约束，任何设备态下都不可用；
 //! - §4.13/§6：同设备单飞（`AppError::Busy`）、口令被拒最多 3 次、每设备 1 个工作线程；
-//! - §4.5/§6：macOS 只做只读描述符侦察，盘操作入口一律禁用。
 //!
 //! 本模块不内联任何可显示字符串：文案键在此与 `locales/*.yml` 之间以键名交接（AC-015）。
 
@@ -15,7 +14,7 @@ use std::sync::Mutex;
 use magi_protocol::{identify_device, DeviceState, Discovery, Password, RunError};
 use magi_transport::transport::{DeviceTarget, Transport, TransportError};
 
-use crate::presentation::{AppError, CODE_TRANSPORT_UNAVAILABLE};
+use crate::presentation::AppError;
 
 /// §4.12 主窗口的操作入口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,8 +69,6 @@ pub const REASON_REENUMERATING: &str = "reason.reenumerating";
 pub const REASON_NOT_LOCKED: &str = "reason.not_locked";
 /// 禁用理由：未发现 T7 Shield（§4.1）。
 pub const REASON_UNRECOGNIZED: &str = "reason.unrecognized";
-/// 禁用理由：当前平台没有可用的 SCSI 命令通道（§4.5）。
-pub const REASON_PLATFORM_UNAVAILABLE: &str = "reason.platform_unavailable";
 /// 禁用理由：口令重试预算耗尽（§6：3 次）。
 pub const REASON_RETRIES_EXHAUSTED: &str = "reason.retries_exhausted";
 
@@ -249,8 +246,7 @@ pub fn validate_password_input(input: &str) -> Result<Password, AppError> {
     }
     Ok(Password::new(input.as_bytes().to_vec()))
 }
-
-/// 设备稳定标识（Linux 上是 `/dev/sgN`，macOS 上是 `VID:PID`）。
+/// 设备稳定标识（Linux 上是 `/dev/sgN`）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DeviceId(String);
 
@@ -435,30 +431,17 @@ impl RescanState {
     }
 }
 
-/// 当前平台能否执行盘操作（§4.5/§6：macOS 只做只读描述符侦察）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlatformCapability {
-    /// 有可用的 SCSI 命令通道（Linux `SG_IO`）。
-    ScsiAvailable,
-    /// 只有只读描述符侦察（macОS）：任何盘操作立即不可用。
-    MacOsDescriptorOnly,
-}
-
-impl PlatformCapability {
-    /// 本机编译期的平台能力判定（运行期不轮询、不重试：§6 降级行为）。
-    pub const fn current() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            PlatformCapability::MacOsDescriptorOnly
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            PlatformCapability::ScsiAvailable
-        }
+/// 平台说明（D27：运行目标平台为仅 Linux）：入口可用性交由设备态矩阵裁决，
+/// 文案键指向 Linux 通道说明。
+pub fn platform_notice() -> PlatformNotice {
+    PlatformNotice {
+        actions: allowed_actions(Some(DeviceState::Locked)),
+        code: None,
+        message_key: "platform.linux_notice",
     }
 }
 
-/// 平台限制提示：入口可用性、限制呈现码、限制文案键。
+/// 平台说明：入口可用性、限制呈现码、平台文案键。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformNotice {
     /// 入口可用性（每个入口一项）。
@@ -468,29 +451,6 @@ pub struct PlatformNotice {
     /// 平台说明文案键（始终存在）。
     pub message_key: &'static str,
 }
-
-/// 按平台能力裁决入口可用性与限制文案（§4.5/§6）。
-///
-/// 盘操作不可用的平台（macOS 只读描述符侦察）全入口禁用，并给出呈现码
-/// [`CODE_TRANSPORT_UNAVAILABLE`]；可用平台交由设备态矩阵裁决。
-pub fn platform_notice(capability: PlatformCapability) -> PlatformNotice {
-    match capability {
-        PlatformCapability::ScsiAvailable => PlatformNotice {
-            actions: allowed_actions(Some(DeviceState::Locked)),
-            code: None,
-            message_key: "platform.linux_notice",
-        },
-        PlatformCapability::MacOsDescriptorOnly => PlatformNotice {
-            actions: ActionId::ALL
-                .into_iter()
-                .map(|action| (action, false))
-                .collect(),
-            code: Some(CODE_TRANSPORT_UNAVAILABLE),
-            message_key: "platform.macos_notice",
-        },
-    }
-}
-
 /// 作业起步阶段的错误：身份未识别，或首个协议交互失败。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OperationStartError {
@@ -712,20 +672,19 @@ mod tests {
         assert!(!attempts.exhausted());
     }
 
-    /// 平台能力裁决：macOS 只读侦察全入口禁用并给出 `TransportUnavailable`（§4.5/AC-004）。
+    /// 平台说明（D27：仅 Linux）：解锁/校验按锁定态矩阵可用，口令写入口恒禁用。
     #[test]
-    fn test_macos_channel_disables_actions() {
-        let notice = platform_notice(PlatformCapability::MacOsDescriptorOnly);
-        assert!(notice.actions.iter().all(|(_, enabled)| !enabled));
-        assert_eq!(notice.code, Some(CODE_TRANSPORT_UNAVAILABLE));
-        assert_eq!(notice.message_key, "platform.macos_notice");
-
-        let linux = platform_notice(PlatformCapability::ScsiAvailable);
-        assert_eq!(linux.code, None);
-        assert!(linux
+    fn test_platform_notice_linux_matrix() {
+        let notice = platform_notice();
+        assert_eq!(notice.code, None);
+        assert_eq!(notice.message_key, "platform.linux_notice");
+        let enabled: Vec<ActionId> = notice
             .actions
             .iter()
-            .any(|(action, enabled)| *action == ActionId::Unlock && *enabled));
+            .filter(|(_, enabled)| *enabled)
+            .map(|(action, _)| *action)
+            .collect();
+        assert_eq!(enabled, vec![ActionId::Unlock, ActionId::ValidatePassword]);
     }
 
     /// 受理设备上限 8 个，超出时给出提示键（§6）。

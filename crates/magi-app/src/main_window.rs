@@ -20,10 +20,7 @@ use libadwaita as adw;
 use magi_protocol::{Password, UnlockEvidence, UnlockStep};
 use rust_i18n::t;
 
-use crate::controller::{
-    self, ActionId, DeviceIdentity, PlatformCapability, PlatformNotice, RescanAction, RescanState,
-    UnlockGate, REASON_PLATFORM_UNAVAILABLE,
-};
+use crate::controller::{ActionId, DeviceIdentity, RescanAction, RescanState, UnlockGate};
 use crate::diagnostics::{self, Level};
 use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
 use crate::password_dialog::PasswordDialog;
@@ -293,11 +290,7 @@ impl MainWindow {
         imp.progress.set_fraction(0.0);
         imp.result_label.set_label(&t!("progress.idle"));
         self.show_unknown_device();
-        self.apply_actions(
-            PlatformCapability::current(),
-            DeviceIdentity::Unrecognized,
-            &UnlockGate::new(),
-        );
+        self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
     }
 
     /// 入口接线（§4.12/§4.11/§6）。
@@ -342,14 +335,13 @@ impl MainWindow {
         ));
     }
 
-    /// 权威轮次的设备刷新（§4.1/§4.5：Linux sysfs / macOS 只读描述符侦察）。
+    /// 权威轮次的设备刷新（§4.1：Linux sysfs 扫描）。
     ///
     /// 同步取数并强制呈现（启动与会话收尾 §3.3：会话收尾后必须重新读取设备态再裁决
-    /// 呈现）；扫描失败在此呈现为错误（§4.13）。周期轮次改走 [`Self::spawn_device_watch`]
+    /// 呈现）；扫描失败在此呈现为错误（§4.12）。周期轮次改走 [`Self::spawn_device_watch`]
     /// 的事件路径，失败只记诊断、不打扰结果区。
     fn refresh_devices(&self) {
-        let capability = PlatformCapability::current();
-        self.show_platform_notice(&controller::platform_notice(capability));
+        self.show_platform_notice();
         let outcome = jobs::fetch_scan();
         if let Some(error) = &outcome.error {
             self.show_error(error);
@@ -409,34 +401,20 @@ impl MainWindow {
         });
     }
 
-    /// 按平台能力 + 设备态 + 重试预算刷新入口敏感度与禁用理由（§4.12/§4.11/§4.5）。
-    pub fn apply_actions(
-        &self,
-        capability: PlatformCapability,
-        identity: DeviceIdentity,
-        gate: &UnlockGate,
-    ) {
-        let notice = controller::platform_notice(capability);
+    /// 按设备态 + 重试预算刷新入口敏感度与禁用理由（§4.12/§4.11）。
+    pub fn apply_actions(&self, identity: DeviceIdentity, gate: &UnlockGate) {
         for action in ActionId::ALL {
             let Some(button) = self.action_button(action) else {
                 continue;
             };
-            let platform_allows = notice
-                .actions
-                .iter()
-                .any(|(candidate, enabled)| *candidate == action && *enabled);
-            let enabled = platform_allows && gate.allows(action, identity.state());
-            let reason_key = if platform_allows {
-                gate.disabled_reason_key(action, identity.state())
-            } else {
-                Some(REASON_PLATFORM_UNAVAILABLE)
-            };
+            let enabled = gate.allows(action, identity.state());
+            let reason_key = gate.disabled_reason_key(action, identity.state());
             button.set_sensitive(enabled);
             button.set_tooltip_text(reason_key.map(|key| t!(key).to_string()).as_deref());
         }
     }
 
-    /// 按当前状态刷新入口（平台能力 + 设备态 + 重试预算的三个来源都在此汇合）。
+    /// 按当前状态刷新入口（设备态与重试预算的两个来源在此汇合）。
     fn refresh_actions(&self) {
         let (identity, gate) = {
             let state = self.state().borrow();
@@ -449,10 +427,10 @@ impl MainWindow {
                 state.gate,
             )
         };
-        self.apply_actions(PlatformCapability::current(), identity, &gate);
+        self.apply_actions(identity, &gate);
     }
 
-    /// 设备卡片（§4.12：型号、VID:PID、设备节点或平台通道、锁定状态、描述符摘要）。
+    /// 设备卡片（§4.12：型号、VID:PID、设备节点、锁定状态、描述符摘要）。
     fn show_hit(&self, hit: &ScanHit) {
         let imp = self.imp();
         imp.status_label
@@ -469,11 +447,7 @@ impl MainWindow {
             Some(node) => format!("{} {node}", t!("device.node")),
             None => t!("device.node").to_string(),
         });
-        let channel_key = match PlatformCapability::current() {
-            PlatformCapability::ScsiAvailable => "device.channel_linux",
-            PlatformCapability::MacOsDescriptorOnly => "device.channel_macos",
-        };
-        imp.device_channel_label.set_label(&t!(channel_key));
+        imp.device_channel_label.set_label(&t!("device.channel"));
         imp.device_descriptor_label
             .set_label(hit.descriptor.as_deref().unwrap_or(""));
     }
@@ -500,10 +474,9 @@ impl MainWindow {
         label.add_css_class(badge_class(identity));
     }
 
-    /// 平台限制文案（§4.5：macOS 呈现已证实限制与 `issues/` 指针）。
-    pub fn show_platform_notice(&self, notice: &PlatformNotice) {
-        // 两份平台文案按同一模板渲染；`issue` 占位只在 macOS 文案里出现（§4.5）。
-        let text = t!(notice.message_key, issue = t!("issue.macos_transport")).to_string();
+    /// 平台说明文案（D27：Linux 通道说明）。
+    pub fn show_platform_notice(&self) {
+        let text = t!("platform.linux_notice").to_string();
         self.imp().platform_notice_label.set_label(&text);
     }
 
@@ -1012,12 +985,8 @@ mod tests {
             assert!(!button.label().unwrap_or_default().is_empty());
         }
 
-        // 锁定态 + 有可用通道：解锁/校验可用，写口令入口仍禁用（§4.11）。
-        window.apply_actions(
-            PlatformCapability::ScsiAvailable,
-            DeviceIdentity::Locked,
-            &UnlockGate::new(),
-        );
+        // 锁定态：解锁/校验可用，写口令入口仍禁用（§4.11）。
+        window.apply_actions(DeviceIdentity::Locked, &UnlockGate::new());
         assert!(window
             .action_button(ActionId::Unlock)
             .unwrap()
@@ -1032,19 +1001,6 @@ mod tests {
             ActionId::DeletePassword,
         ] {
             assert!(!window.action_button(action).unwrap().is_sensitive());
-        }
-
-        // macOS 只读侦察：即使设备是锁定态，入口也全部禁用（§4.5）。
-        window.apply_actions(
-            PlatformCapability::MacOsDescriptorOnly,
-            DeviceIdentity::Locked,
-            &UnlockGate::new(),
-        );
-        for action in ActionId::ALL {
-            assert!(
-                !window.action_button(action).unwrap().is_sensitive(),
-                "{action:?} 在只读侦察平台上必须禁用"
-            );
         }
 
         // 错误呈现：呈现码 + 原因 + 建议（§4.13）。

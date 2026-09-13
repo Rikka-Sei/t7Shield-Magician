@@ -1,10 +1,11 @@
 //! USB 配置描述符解析：`UsbDescriptorSummary` / `AlternateSetting` / `Endpoint` 与
 //! [`parse_config_descriptor`]（跨平台纯函数，无 `cfg` 门控）。
 //!
-//! 分工（K2）：平台侧只负责「拿到描述符字节」（macOS 走 IOKit 注册表，见 `crate::macos`），
-//! 字节 → 结构 的解析全部在本文件，因此 macOS 与 Linux 上跑的是同一份解析与同一份 fixture 测试。
+//! 分工（K2）：平台侧只负责「拿到描述符字节」（Linux 上的命令通道不走描述符侦察，
+//! 描述符来源由调用方注入）；字节 → 结构 的解析全部在本文件，跑的是同一份解析与同一份
+//! fixture 测试。
 //!
-//! 字段来源（§4.5 字段表）：接口/备用设置取 `bInterfaceNumber` / `bAlternateSetting` /
+//! 字段来源（USB 描述符字段，一一对应）：接口/备用设置取 `bInterfaceNumber` / `bAlternateSetting` /
 //! `bInterfaceClass` / `bInterfaceSubClass` / `bInterfaceProtocol`；端点取 `bEndpointAddress` /
 //! `bmAttributes` / `wMaxPacketSize`。`0x30`（SuperSpeed 端点伴生）与 `0x24`（UAS pipe usage）
 //! 等描述符按 `bLength` 步进跳过，不参与解析。
@@ -35,7 +36,7 @@ const DESC_INTERFACE: u8 = 0x04;
 /// 描述符类型：端点。
 const DESC_ENDPOINT: u8 = 0x05;
 
-/// 端点描述符字段（§4.5 字段表中的 `{地址, 属性, 最大包长}`）。
+/// 端点描述符字段（{地址, 属性, 最大包长}）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
     /// `bEndpointAddress`（含方向位，例如 `0x81` / `0x02`）。
@@ -46,7 +47,7 @@ pub struct Endpoint {
     pub max_packet_size: u16,
 }
 
-/// 一个接口的备用设置（§4.5/D19 字段集固定）。
+/// 一个接口的备用设置（字段集固定）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlternateSetting {
     /// `bInterfaceNumber`。
@@ -63,7 +64,7 @@ pub struct AlternateSetting {
     pub endpoints: Vec<Endpoint>,
 }
 
-/// 只读描述符侦察结果（§4.5 契约）。
+/// 描述符侦察结果（跨平台数据模型）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsbDescriptorSummary {
     pub vid: u16,
@@ -151,7 +152,7 @@ pub fn parse_config_descriptor(
 mod tests {
     use super::*;
 
-    /// 附录 B 的真实描述符（锁定态 T7 Shield 上经 IOKit 只读取得，`wTotalLength = 121`）。
+    /// 附录 B 的真实描述符（锁定态 T7 Shield 上只读取得，`wTotalLength = 121`）。
     const REAL_CONFIG_DESCRIPTOR: &str = "\
         09 02 79 00 01 01 00 80 70 \
         09 04 00 00 02 08 06 50 00 \

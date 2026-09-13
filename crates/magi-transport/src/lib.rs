@@ -2,14 +2,12 @@
 //!
 //! 依赖方向：`magi-protocol` → `magi-transport`（反向禁止）。本 crate 只提供 12 字节 CDB
 //! 的收发通道与设备描述符侦察，**不构造令牌流**——令牌流归 `magi-protocol`。
+//! 平台口径（D27）：运行目标平台为仅 Linux，命令通道走 `SG_IO`；非 Linux 平台上的
+//! `open` 直接返回 [`transport::TransportError::Unavailable`]，其运行时行为不在 spec 管辖。
 //!
-//! 平台口径（spec 项目级约束）：Linux 为全功能目标平台，命令通道走 `SG_IO`；macOS 只做
-//! 只读描述符侦察，任何盘操作立即返回 [`transport::TransportError::Unavailable`]，不重试、
-//! 不退避、不轮询（D08）。
-//!
-//! 可测性口径（K4）：只有真正的平台 syscall 使用 `cfg(target_os = ...)` 门控——macOS 侧是
-//! IOKit 注册表调用，Linux 侧是 `ioctl(SG_IO)`。其余全部为跨平台纯逻辑（CDB 构造、sense 与
-//! errno 映射、描述符解析、重枚举采样、SG_IO 头组装），因此在 macOS 上也能完整跑测试。
+//! 可测性口径（K4）：只有真正的平台 syscall 使用 `cfg(target_os = ...)` 门控——Linux 侧是
+//! `ioctl(SG_IO)` 与设备节点打开。其余全部为跨平台纯逻辑（CDB 构造、sense 与 errno 映射、
+//! 描述符解析、重枚举采样、SG_IO 头组装），开发机（含非 Linux）上也能完整跑测试。
 
 /// 唯一的 `Transport` trait：`ScsiCdb` / `Direction` / `DeviceTarget` / `TransportError`。
 pub mod transport;
@@ -29,10 +27,6 @@ pub mod usb_descriptor;
 
 /// 重枚举观察：轮询采样结构、窗口/间隔与 `poll_reenumeration`（纯逻辑 + 可注入探针）。
 pub mod reenumeration;
-
-/// macOS 只读描述符侦察：`MacOsDiscovery`（注册表只读，不打开设备、不 claim、不发 CDB）。
-#[cfg(target_os = "macos")]
-pub mod macos;
 
 /// Linux 命令通道：`LinuxSgIo`（`SG_IO`）与 sysfs 设备扫描/重枚举观察。
 pub mod linux;

@@ -2,7 +2,7 @@
 //!
 //! 可测性口径（K4）：本模块只把「真正调用 `ioctl`」与「打开设备节点」这两处平台动作做
 //! `cfg` 分支（见 [`sg_io::submit`] 与 [`open_device_node`]），其余判定逻辑（SG_IO 头组装、
-//! 完成判定、sysfs 扫描与重枚举采样）都是跨平台纯逻辑，因此在 macOS 上也能跑测试。
+//! 完成判定、sysfs 扫描与重枚举采样）都是跨平台纯逻辑，非 Linux 开发机上也能跑测试。
 
 pub mod scan;
 pub mod sg_io;
@@ -47,10 +47,7 @@ impl LinuxSgIo {
 
 impl Transport for LinuxSgIo {
     fn open(target: &DeviceTarget) -> Result<Self, TransportError> {
-        let DeviceTarget::LinuxSg(path) = target else {
-            // macOS 目标交给 `MacOsDiscovery`；本实现没有对应通道。
-            return Err(TransportError::Unavailable);
-        };
+        let DeviceTarget::LinuxSg(path) = target;
         Ok(Self {
             file: open_device_node(path)?,
             last_sense: RefCell::new(None),
@@ -97,7 +94,7 @@ fn open_device_node(path: &str) -> Result<File, TransportError> {
         .map_err(|error| map_open_errno(error.raw_os_error().unwrap_or(0)))
 }
 
-/// 非 Linux 平台没有 `SG_IO` 通道（与 §4.5 的 macOS 降级口径一致）。
+/// 非 Linux 平台没有 `SG_IO` 通道：`open` 直接返回通道不可用（D27）。
 #[cfg(not(target_os = "linux"))]
 fn open_device_node(_path: &str) -> Result<File, TransportError> {
     Err(TransportError::Unavailable)
@@ -106,19 +103,6 @@ fn open_device_node(_path: &str) -> Result<File, TransportError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// macOS 目标必须立刻拒绝：Linux 实现没有对应通道。
-    #[test]
-    fn test_linux_sg_io_rejects_macos_target() {
-        let target = DeviceTarget::MacOsUsb {
-            vid: 0x04E8,
-            pid: 0x61FC,
-        };
-        assert_eq!(
-            LinuxSgIo::open(&target).err(),
-            Some(TransportError::Unavailable)
-        );
-    }
 
     /// 非 Linux 平台：设备节点路径一律返回通道不可用（不在本平台伪造 SG_IO）。
     #[cfg(not(target_os = "linux"))]

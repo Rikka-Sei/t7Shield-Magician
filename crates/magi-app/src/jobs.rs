@@ -116,18 +116,13 @@ where
     Ok(())
 }
 
-/// 平台命令通道（§4.5）：Linux 走 `SG_IO`；macOS 用只读侦察类型，任何盘操作立即 `Unavailable`。
-#[cfg(target_os = "macos")]
-pub type PlatformTransport = magi_transport::macos::MacOsDiscovery;
-
-/// 平台命令通道（§4.5）：Linux 走 `SG_IO`；macOS 用只读侦察类型，任何盘操作立即 `Unavailable`。
-#[cfg(not(target_os = "macos"))]
+/// 平台命令通道（D27：仅 Linux）：`SG_IO`；非 Linux 平台上 `open` 返回 `Unavailable`。
 pub type PlatformTransport = magi_transport::linux::LinuxSgIo;
 
 /// 一次设备作业的输入（设备标识、身份与传输目标）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceJob {
-    /// 设备稳定标识（Linux 上是 `/dev/sgN`，macOS 上是 `VID:PID`）。
+    /// 设备稳定标识（Linux 上是 `/dev/sgN`）。
     pub device: DeviceId,
     /// 设备身份（§4.1：由 VID/PID 裁决）。
     pub identity: DeviceIdentity,
@@ -179,7 +174,7 @@ impl ProgressReporter for EventReporter<'_> {
     }
 }
 
-/// 扫描本机的 T7 Shield（§4.1/§4.5）：Linux 走 sysfs 扫描；macOS 走只读描述符侦察。
+/// 扫描本机的 T7 Shield（§4.1）：走 sysfs 扫描。
 pub fn scan_devices() -> Result<Vec<ScanHit>, AppError> {
     platform_scan()
 }
@@ -239,43 +234,12 @@ pub fn spawn_scan_watch(sender: async_channel::Sender<ScanOutcome>) -> Result<()
     })
 }
 
-/// macOS：只读描述符侦察（不打开设备、不 claim、不发 CDB）。
-#[cfg(target_os = "macos")]
-fn platform_scan() -> Result<Vec<ScanHit>, AppError> {
-    let mut hits = Vec::new();
-    let mut first_error = None;
-    let mut succeeded = 0usize;
-    // 锁定态与解锁态是两个不同的 PID，分别侦察（§4.1）：某一 PID 下没有设备不是错误，
-    // 因此逐个 PID 容忍失败；只有两个 PID 都失败时才把首个错误上报。
-    for pid in [magi_protocol::PID_LOCKED, magi_protocol::PID_UNLOCKED] {
-        match magi_transport::macos::MacOsDiscovery::enumerate(VENDOR_ID, pid) {
-            Ok(summaries) => {
-                succeeded += 1;
-                for summary in summaries {
-                    if let Some(hit) = hit_from_usb(summary.vid, summary.pid, None, Some(&summary))
-                    {
-                        hits.push(hit);
-                    }
-                }
-            }
-            Err(err) => {
-                first_error.get_or_insert(err);
-            }
-        }
-    }
-    match first_error {
-        Some(err) if succeeded == 0 => Err(err.into()),
-        _ => Ok(hits),
-    }
-}
-
-/// Linux：sysfs 设备扫描（只按厂商过滤，PID 判态交给 `identify_device`）。
-#[cfg(not(target_os = "macos"))]
+/// 本机设备扫描：sysfs 设备扫描（只按厂商过滤，PID 判态交给 `identify_device`）。
 fn platform_scan() -> Result<Vec<ScanHit>, AppError> {
     let found = magi_transport::linux::scan::scan_devices(VENDOR_ID)?;
     Ok(found
         .into_iter()
-        .filter_map(|device| hit_from_usb(device.vid, device.pid, Some(device.node), None))
+        .filter_map(|device| hit_from_usb(device.vid, device.pid, device.node, None))
         .collect())
 }
 
@@ -284,43 +248,35 @@ fn platform_scan() -> Result<Vec<ScanHit>, AppError> {
 pub struct ScanHit {
     /// 作业输入。
     pub job: DeviceJob,
-    /// 只读描述符侦察摘要（macOS 有内容，Linux 为 `None`）。
+    /// 描述符摘要（调用方注入时呈现；当前 Linux 扫描路径为 `None`）。
     pub descriptor: Option<String>,
 }
 
-/// 由 USB 标识构造扫描命中：非目标 PID 返回 `None`（§4.1：不识别、不发任何命令）。
+/// 由 USB 标识与设备节点构造扫描命中：非目标 PID 返回 `None`（§4.1：不识别、不发任何命令）。
 pub fn hit_from_usb(
     vid: u16,
     pid: u16,
-    node: Option<String>,
+    node: String,
     descriptor: Option<&UsbDescriptorSummary>,
 ) -> Option<ScanHit> {
     let identity = DeviceIdentity::from_ids(vid, pid);
     if identity == DeviceIdentity::Unrecognized {
         return None;
     }
-    let device = match &node {
-        Some(node) => DeviceId::new(node.clone()),
-        None => DeviceId::new(format!("{vid:04x}:{pid:04x}")),
-    };
-    let target = match &node {
-        Some(node) => DeviceTarget::LinuxSg(node.clone()),
-        None => DeviceTarget::MacOsUsb { vid, pid },
-    };
     Some(ScanHit {
         job: DeviceJob {
-            device,
+            device: DeviceId::new(node.clone()),
             identity,
-            target,
+            target: DeviceTarget::LinuxSg(node.clone()),
             vid,
             pid,
-            node,
+            node: Some(node),
         },
         descriptor: descriptor.map(describe_descriptor),
     })
 }
 
-/// 描述符摘要（§4.5：备用设置 proto `0x50`（BOT）/`0x62`（UAS）与端点；文案走 i18n 键）。
+/// 描述符摘要（备用设置 proto `0x50`（BOT）/`0x62`（UAS）与端点；文案走 i18n 键）。
 pub fn describe_descriptor(summary: &UsbDescriptorSummary) -> String {
     let mut parts = Vec::new();
     for setting in &summary.alternate_settings {
@@ -416,8 +372,7 @@ pub fn validate_password(
 /// §4.8 判据②：重读一次 Discovery 的 Locking flags。
 ///
 /// 重枚举后原设备节点可能已更换，因此按 VID 重新扫描取当前节点；尽力而为——任何一步失败都
-/// 返回 `None`（判据②不成立），不影响判据①与③，也不重试、不轮询。macOS 上无 sysfs，
-/// 该路径自然返回 `None`（macOS 分支本就不进入观察窗口）。
+/// 返回 `None`（判据②不成立），不影响判据①与③，也不重试、不轮询。
 fn read_locking_flags(job: &DeviceJob) -> Option<u8> {
     let candidates = magi_transport::linux::scan::scan_devices(job.vid).ok()?;
     let node = candidates
@@ -454,7 +409,7 @@ mod tests {
     /// 扫描命中映射（§4.1）：两个目标 PID 各归其态，其它 PID 不入列。
     #[test]
     fn test_scan_hit_maps_identity() {
-        let locked = hit_from_usb(VENDOR_ID, PID_LOCKED, Some("/dev/sg1".to_string()), None)
+        let locked = hit_from_usb(VENDOR_ID, PID_LOCKED, "/dev/sg1".to_string(), None)
             .expect("锁定态必须入列");
         assert_eq!(locked.job.identity, DeviceIdentity::Locked);
         assert_eq!(locked.job.device, DeviceId::new("/dev/sg1"));
@@ -463,53 +418,13 @@ mod tests {
             DeviceTarget::LinuxSg("/dev/sg1".to_string())
         );
 
-        let unlocked = hit_from_usb(VENDOR_ID, PID_UNLOCKED, Some("/dev/sg2".to_string()), None)
+        let unlocked = hit_from_usb(VENDOR_ID, PID_UNLOCKED, "/dev/sg2".to_string(), None)
             .expect("解锁态必须入列");
         assert_eq!(unlocked.job.identity, DeviceIdentity::Unlocked);
         assert_eq!(unlocked.job.device, DeviceId::new("/dev/sg2"));
 
-        assert!(hit_from_usb(VENDOR_ID, 0x61ff, Some("/dev/sg3".to_string()), None).is_none());
-        assert!(hit_from_usb(0x1234, PID_LOCKED, None, None).is_none());
-    }
-
-    /// macOS 形态的命中：无设备节点 → 目标为 `MacOsUsb`，设备标识为 `VID:PID`。
-    #[test]
-    fn test_scan_hit_without_device_node_uses_vid_pid() {
-        let hit = hit_from_usb(VENDOR_ID, PID_LOCKED, None, None).expect("必须入列");
-        assert_eq!(hit.job.device, DeviceId::new("04e8:61fc"));
-        assert_eq!(
-            hit.job.target,
-            DeviceTarget::MacOsUsb {
-                vid: VENDOR_ID,
-                pid: PID_LOCKED
-            }
-        );
-        assert_eq!(hit.job.node, None);
-    }
-
-    /// macOS 盘操作：第一条命令即 `Unavailable`，不产生任何进度、不重试（§4.5/AC-004）。
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn test_macos_disk_operation_returns_unavailable() {
-        let job = hit_from_usb(VENDOR_ID, PID_LOCKED, None, None)
-            .expect("锁定态必须入列")
-            .job;
-        let password = crate::controller::validate_password_input("secret").expect("非空口令");
-        let cancel = CancelFlag::new();
-        let events = RefCell::new(Vec::new());
-        let emit = |event: AppEvent| events.borrow_mut().push(event);
-
-        let error =
-            unlock_device(&job, password, &cancel, &emit).expect_err("macOS 上盘操作必须立即失败");
-        assert_eq!(error, AppError::Transport(TransportError::Unavailable));
-        assert_eq!(
-            crate::presentation::presentation_code(&error),
-            "TransportUnavailable"
-        );
-        assert!(
-            events.borrow().is_empty(),
-            "macOS 上不得产生进度事件（未下发任何命令）"
-        );
+        assert!(hit_from_usb(VENDOR_ID, 0x61ff, "/dev/sg3".to_string(), None).is_none());
+        assert!(hit_from_usb(0x1234, PID_LOCKED, "/dev/sg4".to_string(), None).is_none());
     }
 
     /// 锚点（W13）：取消在中途置位后不再下发后续命令，并尽力 EndSession，结果标记为用户取消。

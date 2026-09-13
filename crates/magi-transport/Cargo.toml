@@ -1,6 +1,6 @@
 [package]
 name = "magi-transport"
-description = "T7 Shield 传输层：唯一的 Transport trait 与平台通道（Linux SG_IO / macOS 只读描述符侦察）"
+description = "T7 Shield 传输层：唯一的 Transport trait 与平台通道（Linux SG_IO）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,3 @@ workspace = true
 [dependencies]
 libc.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation.workspace = true
-io-kit-sys.workspace = true
