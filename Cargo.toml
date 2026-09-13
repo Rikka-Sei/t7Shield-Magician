@@ -17,6 +17,10 @@ t7-transport = { path = "crates/t7-transport" }
 # 平台通道：Linux SG_IO ioctl 与 errno 常量
 libc = "0.2"
 
+# macOS 只读描述符侦察：IOKit 注册表绑定 + CoreFoundation 安全包装
+io-kit-sys = "0.5"
+core-foundation = "0.10"
+
 # 口令缓冲生命周期（Password 持有 Zeroizing<Vec<u8>>）
 zeroize = "1.9"
 

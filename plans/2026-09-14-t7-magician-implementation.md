@@ -413,11 +413,11 @@ graph TD
 - `IOUSBDeviceInterface`/`IOCFPlugInInterface` 的 `Release` 必须在 `Drop` 中调用（无泄漏），见 `iokit.rs` 的 RAII 包装。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_macos_transport_unavailable()`（失败，跨平台无条件运行）：`MacOsDiscovery::open(&DeviceTarget::MacOsUsb { vid: 0x04e8, pid: 0x61fc })` → `Ok(_)`；随后对 `Direction::In` 与 `Direction::Out` 各调用一次 `execute(&cdb_security_in(0x1004, 2048), .., &mut buf, CMD_TIMEOUT)` → 两次都返回 `Err(TransportError::Unavailable)`，且 `buf` 未被写入一个字节（证明「未发起」而非「发起后失败」、也没有重试或退避）。
-2. [ ] 写 `#[cfg(target_os = "macos")] fn test_macos_enumerate_reads_descriptors()`：本机有锁定态设备时断言返回 ≥1 条概要且 `vid/pid == 0x04e8/0x61fc`、含 2 个备用设置（0x50、0x62）；无设备时断言语义为「返回空 `Vec` 且不 panic」。（本机当前确有该设备，见附录 B 的证据。）
-3. [ ] 实现 `iokit.rs` + `macos/mod.rs`；两条测试 + clippy 全绿。
-4. [ ] 人工核对（写进 PR 描述/提交说明）：源码中不存在 `USBDeviceOpen`、`USBInterfaceOpen`、`SetConfiguration`、`ClaimInterface` 等占用型调用。
-5. [ ] 提交：`git commit -S -m "feat: 实现 macOS 只读描述符侦察与通道不可用降级"`。
+1. [x] 写 `fn test_macos_transport_unavailable()`（失败，跨平台无条件运行）：`MacOsDiscovery::open(&DeviceTarget::MacOsUsb { vid: 0x04e8, pid: 0x61fc })` → `Ok(_)`；随后对 `Direction::In` 与 `Direction::Out` 各调用一次 `execute(&cdb_security_in(0x1004, 2048), .., &mut buf, CMD_TIMEOUT)` → 两次都返回 `Err(TransportError::Unavailable)`，且 `buf` 未被写入一个字节（证明「未发起」而非「发起后失败」、也没有重试或退避）。
+2. [x] 写 `#[cfg(target_os = "macos")] fn test_macos_enumerate_reads_descriptors()`：本机有锁定态设备时断言返回 ≥1 条概要且 `vid/pid == 0x04e8/0x61fc`、含 2 个备用设置（0x50、0x62）；无设备时断言语义为「返回空 `Vec` 且不 panic」。（本机当前确有该设备，见附录 B 的证据。）
+3. [x] 实现 `iokit.rs` + `macos/mod.rs`；两条测试 + clippy 全绿。
+4. [x] 人工核对（写进 PR 描述/提交说明）：源码中不存在 `USBDeviceOpen`、`USBInterfaceOpen`、`SetConfiguration`、`ClaimInterface` 等占用型调用。
+5. [x] 提交：`git commit -S -m "feat: 实现 macOS 只读描述符侦察与通道不可用降级"`。
 
 **Acceptance:** `test_macos_transport_unavailable` 可 grep 且通过；macOS 上 `enumerate` 读到的备用设置与附录 B 的真实描述符一致；无任何占用设备的调用。
 
