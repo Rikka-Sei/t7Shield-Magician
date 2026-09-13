@@ -29,13 +29,43 @@
           gobject-introspection
         ];
 
-        # 仅 Linux 需要：dconf schema、图标主题、GIO 扩展模块。
-        gtkRuntimeDeps = lib.optionals stdenv.hostPlatform.isLinux (with pkgs; [
+        # GTK4/libadwaita 启动时需要 dconf schema（org.gnome.desktop.* 等）。缺失时 GIO 会
+        # 打印 g_settings_schema_source_lookup 的 GLib-GIO-CRITICAL 噪声，两平台都要提供。
+        gtkSchemaDeps = with pkgs; [
           gsettings-desktop-schemas
+        ];
+
+        # 仅 Linux 需要：图标主题、GIO 扩展模块。
+        gtkRuntimeDeps = lib.optionals stdenv.hostPlatform.isLinux (with pkgs; [
           adwaita-icon-theme
           hicolor-icon-theme
           glib-networking
         ]);
+
+        # 开发期工具：spec 审计/屏障脚本、任务运行器、代码检索。
+        # python3 必须来自 nixpkgs：darwin 上 stdenv 会导出 DEVELOPER_DIR/SDKROOT（apple-sdk），
+        # 导致 /usr/bin/python3 这个 shim 报 `error: tool 'python3' not found`。
+        devTools = with pkgs; [
+          python3
+          just
+          ripgrep
+        ];
+
+        # GSettings 搜索路径：nixpkgs 把 schema 装在
+        # share/gsettings-schemas/<pname>-<version>/glib-2.0/schemas，而不是
+        # share/glib-2.0/schemas，因此 XDG_DATA_DIRS 永远搜不到，必须用
+        # GSETTINGS_SCHEMA_DIR 显式指路。否则 GTK/libadwaita 启动时
+        # g_settings_schema_source_get_default() 返回 NULL，stderr 出现
+        # GLib-GIO-CRITICAL: g_settings_schema_source_lookup: assertion 'source != NULL' failed。
+        gtkSchemaDirs = [
+          "${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name}/glib-2.0/schemas"
+          "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
+        ];
+
+        # 两平台一致导出（darwin 也必须显式给出）。
+        gtkSchemaHook = ''
+          export GSETTINGS_SCHEMA_DIR=${lib.concatStringsSep ":" gtkSchemaDirs}''${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}
+        '';
 
         # 仅 Linux 需要导出的 GTK 运行时变量（dconf schema 搜索路径、GIO 扩展模块、
         # GDK 后端）。macOS 下 GTK/libadwaita 同样来自 nixpkgs，但 XDG 目录与 GIO
@@ -65,10 +95,7 @@
             wrapGAppsHook4
           ] ++ rustToolchain;
 
-          buildInputs = gtkDevDeps ++ gtkRuntimeDeps ++ (with pkgs; [
-            just     # 可选任务命令工具
-            ripgrep  # 代码检索
-          ]);
+          buildInputs = gtkDevDeps ++ gtkSchemaDeps ++ gtkRuntimeDeps ++ devTools;
 
           # rust-analyzer 需要标准库源码才能给出 std 的跳转/补全。
           RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
@@ -78,6 +105,7 @@
             echo "  rustc: $(rustc --version)"
             echo "  gtk4:  $(pkg-config --modversion gtk4 2>/dev/null || echo '未找到')"
             echo "  adw:   $(pkg-config --modversion libadwaita-1 2>/dev/null || echo '未找到')"
+            ${gtkSchemaHook}
             ${gtkRuntimeHook}
           '';
         };
