@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 23,
+  "latest_decision": 25,
   "decisions": [
     {
       "decision_id": "D01",
@@ -731,6 +731,149 @@
           "reason": "不得引入以 comid 为字段名的会话结构"
         }
       ]
+    },
+    {
+      "decision_id": "D24",
+      "required_terms": [
+        "MagiShield"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "crates/magi-protocol|crates/magi-transport|crates/magi-app",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "3",
+            "10"
+          ],
+          "reason": "架构与锚点表必须使用 magi-* crate 名"
+        },
+        {
+          "pattern": "magi-protocol|magi-transport|magi-app",
+          "count": {
+            "min": 6
+          },
+          "sections": [
+            "*"
+          ],
+          "reason": "magi-* 体系名必须在全文替换到位"
+        },
+        {
+          "pattern": "MagiShield",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "显示名与 APP_ID 必须在 §4.12 出现"
+        },
+        {
+          "pattern": "dev\\.rikki\\.MagiShield",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "APP_ID 必须可核对"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "crates/t7-|t7_protocol|t7_transport|t7_app|t7-protocol|t7-transport|t7-app",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "旧 crate 前缀必须清零（spec 目录名 t7-magician 不受影响）"
+        }
+      ]
+    },
+    {
+      "decision_id": "D25",
+      "required_terms": [
+        "侧边栏"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "侧边栏",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "布局契约必须写明侧边栏"
+        },
+        {
+          "pattern": "导航项",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "导航项与数量判据必须可验证"
+        },
+        {
+          "pattern": "徽章",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "锁定状态徽章必须与 DeviceState 对应"
+        },
+        {
+          "pattern": "诊断页",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "诊断页契约必须落位"
+        },
+        {
+          "pattern": "关于页",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "关于页契约必须落位"
+        },
+        {
+          "pattern": "选中态",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "导航当前项判据必须可验证"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "[0-9]+ ?px|#[0-9a-fA-F]{6}",
+          "count": 1,
+          "sections": [
+            "4"
+          ],
+          "reason": "像素级实现细节（字号/间距/颜色值）不得进 spec 规范性条款"
+        }
+      ]
     }
   ],
   "code_contracts": [
@@ -739,7 +882,7 @@
       "pattern": "pub trait Transport",
       "count": 1,
       "source_globs": [
-        "crates/t7-transport/src/**/*.rs"
+        "crates/magi-transport/src/**/*.rs"
       ],
       "reason": "传输层只有一个权威 trait 定义（D07）"
     },
@@ -750,7 +893,7 @@
         "min": 1
       },
       "source_globs": [
-        "crates/t7-transport/src/**/*.rs"
+        "crates/magi-transport/src/**/*.rs"
       ],
       "reason": "macOS 降级错误变体必须存在（D08）"
     },
@@ -761,7 +904,7 @@
         "min": 1
       },
       "source_globs": [
-        "crates/t7-protocol/src/**/*.rs"
+        "crates/magi-protocol/src/**/*.rs"
       ],
       "reason": "ComID 必须作为 discovery 解析结果传递，而非常量（D03）"
     },
@@ -772,7 +915,7 @@
         "min": 1
       },
       "source_globs": [
-        "crates/t7-app/src/**/*.rs"
+        "crates/magi-app/src/**/*.rs"
       ],
       "reason": "UI 必须使用 composite template（D09）"
     },
@@ -783,10 +926,21 @@
         "min": 1
       },
       "source_globs": [
-        "crates/t7-app/src/**/*.rs",
-        "crates/t7-protocol/src/**/*.rs"
+        "crates/magi-app/src/**/*.rs",
+        "crates/magi-protocol/src/**/*.rs"
       ],
       "reason": "口令缓冲必须 zeroize（D10）"
+    },
+    {
+      "id": "app-identity",
+      "pattern": "dev\\.rikki\\.MagiShield",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "应用 ID 必须与 §4.12 身份表一致（D24）"
     }
   ],
   "obsolete_code_contracts": [],
@@ -794,153 +948,174 @@
     {
       "name": "test_level0_parses_base_comid",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_start_session_frame_golden",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_session_ids_swap_mapping",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_empty_response_is_fatal",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_password_rejected_status_byte_one",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_set_datastore_row_two_frame_golden",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_unexpected_response_length_rejected",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_unsupported_security_protocol",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_password_write_operations_are_unspecified",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_session_closed_on_abort",
       "source_globs": [
-        "crates/t7-protocol/**/*.rs"
+        "crates/magi-protocol/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_macos_transport_unavailable",
       "source_globs": [
-        "crates/t7-transport/**/*.rs"
+        "crates/magi-transport/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_command_timeout_maps_to_timeout_error",
       "source_globs": [
-        "crates/t7-transport/**/*.rs"
+        "crates/magi-transport/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_device_gone_during_reenumeration",
       "source_globs": [
-        "crates/t7-transport/**/*.rs"
+        "crates/magi-transport/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_locked_device_actions_disabled",
       "source_globs": [
-        "crates/t7-app/**/*.rs"
+        "crates/magi-app/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_unknown_pid_is_rejected",
       "source_globs": [
-        "crates/t7-app/**/*.rs"
+        "crates/magi-app/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_empty_password_rejected",
       "source_globs": [
-        "crates/t7-app/**/*.rs"
+        "crates/magi-app/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_duplicate_trigger_is_busy",
       "source_globs": [
-        "crates/t7-app/**/*.rs"
+        "crates/magi-app/**/*.rs"
       ],
       "required": true
     },
     {
       "name": "test_password_zeroized_after_submit",
       "source_globs": [
-        "crates/t7-app/**/*.rs"
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_sidebar_navigation_items",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_lock_badge_matches_device_state",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_diagnostics_export_is_redacted",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
       ],
       "required": true
     }
   ],
   "barriers": [
     {
-      "name": "协议层黄金向量与解析测试（crates/t7-protocol）",
+      "name": "协议层黄金向量与解析测试（crates/magi-protocol）",
       "command": [
         "sh",
         "-c",
-        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-protocol ]; then cargo test -p t7-protocol; else echo '[planned] crates/t7-protocol 尚未创建：协议层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/magi-protocol ]; then cargo test -p magi-protocol; else echo '[planned] crates/magi-protocol 尚未创建：协议层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     },
     {
-      "name": "传输层契约测试（crates/t7-transport）",
+      "name": "传输层契约测试（crates/magi-transport）",
       "command": [
         "sh",
         "-c",
-        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-transport ]; then cargo test -p t7-transport; else echo '[planned] crates/t7-transport 尚未创建：传输层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/magi-transport ]; then cargo test -p magi-transport; else echo '[planned] crates/magi-transport 尚未创建：传输层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     },
     {
-      "name": "应用层冒烟测试（crates/t7-app）",
+      "name": "应用层冒烟测试（crates/magi-app）",
       "command": [
         "sh",
         "-c",
-        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-app ]; then cargo test -p t7-app; else echo '[planned] crates/t7-app 尚未创建：应用层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/magi-app ]; then cargo test -p magi-app; else echo '[planned] crates/magi-app 尚未创建：应用层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     }
   ]

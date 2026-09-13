@@ -1,11 +1,11 @@
-# t7 Shield GUI 客户端（t7-magician）— 权威规格（Spec）
+# MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
-**状态:** Draft（未接线：目标 crate `crates/t7-protocol`、`crates/t7-transport`、`crates/t7-app` 尚未创建，代码契约与测试锚点指向目标实现，审计命中降级为 warning）
-**版本:** 0.1（决策基线：D01–D23）
+**状态:** Draft（未接线：代码契约与测试锚点指向目标 crate `crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`，尚未全部命中，审计降级为 warning）
+**版本:** 0.1（决策基线：D01–D25）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与平台行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
-**变更历史:** 见 `history/`、`issues/` 与 §9 决策日志。跨仓库证据源：t7Shield-protocol 仓库 `analysis/protocol-notes.md`（§0/§3/§4/§10/§12）、`analysis/unlock-report.md`、`analysis/probe-usb.md`、`tools/unlock/unlock.py`、`tools/t7ctl/README.md`。
+**变更历史:** 见 `history/`、`issues/` 与 §9 决策日志。本 spec 目录名仍为 `docs/specs/t7-magician/`：目录改名牵连 `history/` 冻结快照治理，待用户确认后另开变更；正文一律使用 magi 体系名（`magi` / `magi-*` / `MagiShield`）。跨仓库证据源：t7Shield-protocol 仓库 `analysis/protocol-notes.md`（§0/§3/§4/§10/§12）、`analysis/unlock-report.md`、`analysis/probe-usb.md`、`tools/unlock/unlock.py`、`tools/t7ctl/README.md`。
 
 ---
 
@@ -82,17 +82,17 @@
 
 ```mermaid
 graph LR
-    subgraph app["crates/t7-app（GTK4 + libadwaita）"]
-        UI["主窗口 / 口令对话框<br/>GtkBuilder .ui + CompositeTemplate"]
+    subgraph app["crates/magi-app（GTK4 + libadwaita）"]
+        UI["应用外壳：侧边栏导航（仪表盘/诊断/关于）<br/>GtkBuilder .ui + CompositeTemplate"]
         CTL["操作控制器<br/>单飞 + 工作线程 + channel 回主线程"]
         I18N["i18n 资源<br/>zh-CN（默认）/ en"]
     end
-    subgraph proto["crates/t7-protocol（纯协议，无 UI 依赖）"]
+    subgraph proto["crates/magi-protocol（纯协议，无 UI 依赖）"]
         DISC["Level-0 Discovery 解析<br/>baseComID + Locking flags"]
         FRAME["帧构造与响应解析<br/>0x38 头 + 令牌流 + 方法状态字节"]
         SM["会话状态机<br/>Idle→Discovered→SessionOpen→InTransaction→Closed/Failed"]
     end
-    subgraph tr["crates/t7-transport（Transport trait）"]
+    subgraph tr["crates/magi-transport（Transport trait）"]
         TRT["Transport trait"]
         LIN["LinuxSgIo：sg_io 下发 12 字节 CDB"]
         MAC["MacOsDiscovery：USB/IOKit 描述符侦察 + Unavailable"]
@@ -112,7 +112,7 @@ graph LR
     I18N --- UI
 ```
 
-依赖方向为单向：`t7-app` → `t7-protocol` → `t7-transport`。`t7-protocol` 不得依赖 GTK 与任何 UI 类型；`t7-app` 不得直接构造 CDB 或令牌流。§3.1 不负责：设备侧固件的内部状态命名、内核驱动（`IOUSBMassStorageInterfaceNub`）与 kext 行为、文件系统层。
+依赖方向为单向：`magi-app` → `magi-protocol` → `magi-transport`。`magi-protocol` 不得依赖 GTK 与任何 UI 类型；`magi-app` 不得直接构造 CDB 或令牌流。§3.1 不负责：设备侧固件的内部状态命名、内核驱动（`IOUSBMassStorageInterfaceNub`）与 kext 行为、文件系统层。
 
 ### 3.2 状态定义
 
@@ -722,28 +722,72 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 正常示例（当前唯一的正确行为）：调用任一函数返回 `Err(PasswordOperationUnspecified)`，UI 呈现「该功能在字节级序列被证实前不可执行」并链接 `issues/2026-09-14-口令写操作证据缺口.md`。
 异常示例（禁止行为）：实现臆造 `Set(C_PIN_SID, ...)` 序列并发送 → 违反本条款；代码评审必须拦截该类实现。
 
-### 4.12 REQ-012 UI 主窗口与口令对话框
+### 4.12 REQ-012 应用外壳与界面契约（侧边栏导航 + 仪表盘 + 口令对话框）
 
-> **作为** 用户，**我希望** 在一个窗口里看到设备、状态与操作结果，**以便** 不必理解协议细节。
+> **作为** 用户，**我希望** 在一个窗口里看到设备状态与操作入口，并能切到诊断与关于页，**以便** 不必理解协议细节。
 > **优先级:** P0
-> **归因:** D09、D10
+> **归因:** D09、D10、D24、D25
 > **验收标准:**
-> - Given 应用启动；When 窗口显示；Then 呈现四类元素：设备卡片（型号、VID/PID、设备节点或平台通道）、锁定状态、操作入口、进度与结果反馈。
-> - Given 设备处于锁定态；When 查看操作入口；Then 「解锁」「校验口令」可用，「设置/修改/删除口令」呈现为受证据缺口约束的不可用入口。
+> - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为三类页面（仪表盘、诊断、关于），导航项数量 ≥ 3，且当前项有选中态（任一时刻选中项唯一）。
+> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备卡（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作区（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
+> - Given 位于诊断页；When 查看内容；Then 呈现内存环形缓冲的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤。
+> - Given 位于关于页；When 查看内容；Then 呈现应用版本与 t7Shield-protocol 协议仓库引用。
+> - Given 任一界面定义；When 渲染；Then 使用 GtkBuilder `.ui` 文件与 `#[derive(CompositeTemplate)]` 绑定；`.ui` 文件不含文案字面量（可显示文案只写 i18n 键）。
 > - Given 口令对话框打开；When 输入口令；Then 输入不回显；提交后口令缓冲立即 zeroize；口令不进入日志、剪贴板与任何持久化存储。
-> - Given 任一 UI 文件；When 定义界面；Then 使用 GtkBuilder `.ui` 文件与 `#[derive(CompositeTemplate)]` 绑定，不得用代码手工拼装该窗口。
+
+应用身份契约（显示名与 APP_ID 为暂定值，调整时按 §9 变更流程更新本表与 D24）：
+
+| 项 | 取值 |
+|---|---|
+| 主程序二进制名 | `magi` |
+| 应用显示名 | `MagiShield`（经 i18n 键渲染，`zh-CN` 与 `en` 同值） |
+| 应用 ID | `dev.rikki.MagiShield`（GApplication ID） |
+
+布局契约（只规定元素、状态与可验证判据；颜色值、间距、字号等像素级细节不进本 spec）：
+
+| 区域 | 元素 | 可验证判据 |
+|---|---|---|
+| 侧边栏 | 导航项：仪表盘 / 诊断 / 关于 | 导航项数量 ≥ 3；当前项有选中态且唯一；侧边栏为深色外观 |
+| 主区 · 仪表盘 | 设备卡：产品名、VID/PID、设备节点或平台通道 | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
+| 主区 · 仪表盘 | 锁定状态徽章 | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
+| 主区 · 仪表盘 | 操作区：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
+| 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.8 的判据结论 |
+| 诊断页 | 内存环形缓冲只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
+| 关于页 | 版本与协议仓库引用 | 两个字段齐备 |
 
 契约：
 
 ```rust
+/// 应用身份：二进制名 `magi`，显示名与 ID 见上方表格。
+pub const APP_ID: &str = "dev.rikki.MagiShield";
+pub const APP_DISPLAY_NAME_KEY: &str = "app.display-name";
+
 #[derive(CompositeTemplate, Default)]
 #[template(file = "ui/main_window.ui")]
 pub struct MainWindow {
+    #[template_child] pub sidebar: TemplateChild<gtk::ListBox>,        // 导航项 >= 3，当前项选中
+    #[template_child] pub nav_view: TemplateChild<adw::NavigationView>, // 仪表盘 / 诊断 / 关于
     #[template_child] pub device_card: TemplateChild<adw::Bin>,
-    #[template_child] pub status_label: TemplateChild<gtk::Label>,
+    #[template_child] pub lock_badge: TemplateChild<gtk::Label>,        // 与 DeviceState 一一对应
     #[template_child] pub action_unlock: TemplateChild<gtk::Button>,
+    #[template_child] pub action_validate: TemplateChild<gtk::Button>,
+    #[template_child] pub action_password_admin: TemplateChild<gtk::Button>, // 恒为禁用态
     #[template_child] pub progress: TemplateChild<gtk::ProgressBar>,
     #[template_child] pub result_label: TemplateChild<gtk::Label>,
+}
+
+#[derive(CompositeTemplate, Default)]
+#[template(file = "ui/diagnostics_page.ui")]
+pub struct DiagnosticsPage {
+    #[template_child] pub log_list: TemplateChild<gtk::ListBox>,      // 只读
+    #[template_child] pub export_button: TemplateChild<gtk::Button>,  // 脱敏导出
+}
+
+#[derive(CompositeTemplate, Default)]
+#[template(file = "ui/about_page.ui")]
+pub struct AboutPage {
+    #[template_child] pub version_label: TemplateChild<gtk::Label>,
+    #[template_child] pub protocol_credit: TemplateChild<gtk::Label>,
 }
 
 #[derive(CompositeTemplate, Default)]
@@ -756,8 +800,8 @@ pub struct PasswordDialog {
 pub struct Password(Zeroizing<Vec<u8>>);   // 提交后由 zeroize 清除
 ```
 
-正常示例：锁定态下点击「解锁」→ 弹出不回显口令对话框 → 提交后在 `result_label` 显示进度与最终判据。
-异常示例：口令为空时提交 → 对话框就地提示并保持打开，不构造任何报文。
+正常示例：锁定态下打开应用 → 仪表盘页显示设备卡与锁定徽章 → 点击「解锁」→ 弹出不回显口令对话框 → 提交后在结果区显示进度与最终判据；切换到诊断页可查看只读日志并导出脱敏文本。
+异常示例：口令为空时提交 → 对话框就地提示并保持打开，不构造任何报文；口令管理入口被点击 → 呈现证据缺口说明，不打开对话框、不下发命令。
 
 ### 4.13 REQ-013 线程模型与错误呈现
 
@@ -829,24 +873,24 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 
 | 标识符 | 定义位置 | 产生条件（事实） | 错误链身份 | 消费方 |
 |---|---|---|---|---|
-| `TransportError::Unavailable` | `t7-transport` | macOS 上任何盘操作；或平台通道缺失 | 独立变体，不包装底层错误 | UI 以呈现码 `TransportUnavailable` 呈现「平台通道不可用」，不重试（D08） |
-| `TransportError::PermissionDenied` | `t7-transport` | `open`/`ioctl` 因权限失败（`EACCES`/`EPERM`） | 独立变体 | UI 提示设备节点权限与设备归属 |
-| `TransportError::DeviceGone` | `t7-transport` | 设备节点在重枚举期间消失（`ENODEV`/`ENXIO`） | 独立变体 | UI 提示等待重枚举后重试 |
-| `TransportError::Timeout` | `t7-transport` | 单条命令超过 §6 的超时 | 独立变体，携带实际耗时 | UI 提示超时；协议层不做自动重放（D11） |
-| `TransportError::ShortResponse { got }` | `t7-transport` | 返回字节数不足以构成 `0x38` 字节报文头 | 独立变体 | 协议层拒绝解析，UI 呈现传输错误 |
-| `TransportError::ScsiCheckCondition { sense }` | `t7-transport` | SCSI 状态为 CHECK CONDITION | 包装 `SenseData` | 协议层判定：sense `03/11/00` = 通道不存在（`UnsupportedSecurityProtocol`） |
-| `TransportError::Platform { code }` | `t7-transport` | 平台调用返回非 SCSI 语义的错误码（例如 IOKit `kern_return_t`），或既非 GOOD 也非 CHECK CONDITION 的完成状态 | 独立变体，`code` 保存平台原始值 | UI 以呈现码 `TransportFailure` 呈现，并保留平台码供诊断（D18） |
-| `ProtocolError::DiscoveryTooShort { len }` | `t7-protocol` | Discovery 响应长度 < `0x31` | 独立变体 | UI 呈现「设备不接受 discovery」，停止后续操作 |
-| `ProtocolError::NoOpalSscDescriptor` | `t7-protocol` | 描述符区无 feature `0x0203` 项 | 独立变体 | 同上，并提示该设备不走 A 路 |
-| `ProtocolError::LockingDescriptorMissing` | `t7-protocol` | 描述符区有 Opal SSC 项但无 Locking（feature `0x0002`）项 | 独立变体 | 呈现「无法判定锁定状态」，入口保持禁用 |
-| `ProtocolError::UnsupportedSecurityProtocol { proto, sense }` | `t7-protocol` | 请求的协议字节不是 `0x01`，或设备回 sense `03/11/00` | 包装 `SenseData` | 拒绝实现 0xFD 路径的依据（D01/D12） |
-| `ProtocolError::SessionRejected { status_byte }` | `t7-protocol` | 状态列表内方法状态字节非 0（口令错误实测为 `1`） | 独立变体 | UI 呈现「口令被拒」；仅此分类允许用户重试 |
-| `ProtocolError::EmptyResponse { step }` | `t7-protocol` | 4 条 `Set` 中任一应答 `data_len = 0` 且无状态列表 | 独立变体，带步骤标识 | 判致命：终止序列，尽力 EndSession（D05） |
-| `ProtocolError::UnexpectedResponseLength { step, expected, actual }` | `t7-protocol` | 应答长度不等于 §4.6/§4.7 的期望值（37 / 2 / 8 / 1） | 独立变体 | 终止序列；用于区分「设备固件差异」与「会话错位」 |
-| `ProtocolError::SessionIdsMissing` | `t7-protocol` | StartSession 应答中 token[4]/token[5] 缺失或类型不符 | 独立变体 | 终止序列，提示协议不符 |
-| `ProtocolError::PasswordOperationUnspecified` | `t7-protocol` | 调用口令写操作入口 | 独立变体 | UI 呈现证据缺口说明与 `issues/` 指针（D14） |
-| `AppError::EmptyPassword` | `t7-app` | 口令输入为空 | 独立变体 | 对话框就地提示，不构造报文 |
-| `AppError::Busy` | `t7-app` | 同设备已有在飞操作 | 独立变体 | UI 提示已有操作在执行 |
+| `TransportError::Unavailable` | `magi-transport` | macOS 上任何盘操作；或平台通道缺失 | 独立变体，不包装底层错误 | UI 以呈现码 `TransportUnavailable` 呈现「平台通道不可用」，不重试（D08） |
+| `TransportError::PermissionDenied` | `magi-transport` | `open`/`ioctl` 因权限失败（`EACCES`/`EPERM`） | 独立变体 | UI 提示设备节点权限与设备归属 |
+| `TransportError::DeviceGone` | `magi-transport` | 设备节点在重枚举期间消失（`ENODEV`/`ENXIO`） | 独立变体 | UI 提示等待重枚举后重试 |
+| `TransportError::Timeout` | `magi-transport` | 单条命令超过 §6 的超时 | 独立变体，携带实际耗时 | UI 提示超时；协议层不做自动重放（D11） |
+| `TransportError::ShortResponse { got }` | `magi-transport` | 返回字节数不足以构成 `0x38` 字节报文头 | 独立变体 | 协议层拒绝解析，UI 呈现传输错误 |
+| `TransportError::ScsiCheckCondition { sense }` | `magi-transport` | SCSI 状态为 CHECK CONDITION | 包装 `SenseData` | 协议层判定：sense `03/11/00` = 通道不存在（`UnsupportedSecurityProtocol`） |
+| `TransportError::Platform { code }` | `magi-transport` | 平台调用返回非 SCSI 语义的错误码（例如 IOKit `kern_return_t`），或既非 GOOD 也非 CHECK CONDITION 的完成状态 | 独立变体，`code` 保存平台原始值 | UI 以呈现码 `TransportFailure` 呈现，并保留平台码供诊断（D18） |
+| `ProtocolError::DiscoveryTooShort { len }` | `magi-protocol` | Discovery 响应长度 < `0x31` | 独立变体 | UI 呈现「设备不接受 discovery」，停止后续操作 |
+| `ProtocolError::NoOpalSscDescriptor` | `magi-protocol` | 描述符区无 feature `0x0203` 项 | 独立变体 | 同上，并提示该设备不走 A 路 |
+| `ProtocolError::LockingDescriptorMissing` | `magi-protocol` | 描述符区有 Opal SSC 项但无 Locking（feature `0x0002`）项 | 独立变体 | 呈现「无法判定锁定状态」，入口保持禁用 |
+| `ProtocolError::UnsupportedSecurityProtocol { proto, sense }` | `magi-protocol` | 请求的协议字节不是 `0x01`，或设备回 sense `03/11/00` | 包装 `SenseData` | 拒绝实现 0xFD 路径的依据（D01/D12） |
+| `ProtocolError::SessionRejected { status_byte }` | `magi-protocol` | 状态列表内方法状态字节非 0（口令错误实测为 `1`） | 独立变体 | UI 呈现「口令被拒」；仅此分类允许用户重试 |
+| `ProtocolError::EmptyResponse { step }` | `magi-protocol` | 4 条 `Set` 中任一应答 `data_len = 0` 且无状态列表 | 独立变体，带步骤标识 | 判致命：终止序列，尽力 EndSession（D05） |
+| `ProtocolError::UnexpectedResponseLength { step, expected, actual }` | `magi-protocol` | 应答长度不等于 §4.6/§4.7 的期望值（37 / 2 / 8 / 1） | 独立变体 | 终止序列；用于区分「设备固件差异」与「会话错位」 |
+| `ProtocolError::SessionIdsMissing` | `magi-protocol` | StartSession 应答中 token[4]/token[5] 缺失或类型不符 | 独立变体 | 终止序列，提示协议不符 |
+| `ProtocolError::PasswordOperationUnspecified` | `magi-protocol` | 调用口令写操作入口 | 独立变体 | UI 呈现证据缺口说明与 `issues/` 指针（D14） |
+| `AppError::EmptyPassword` | `magi-app` | 口令输入为空 | 独立变体 | 对话框就地提示，不构造报文 |
+| `AppError::Busy` | `magi-app` | 同设备已有在飞操作 | 独立变体 | UI 提示已有操作在执行 |
 
 判定链的关键区分（全部为事实层结论）：
 
@@ -917,7 +961,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 - AC-007（对 GOAL-2、「解锁成功判据与重枚举」）判据按固定优先级返回；仅 PID 变化时结论不等于分区表出现；客户端不发送重枚举触发命令。
 - AC-008（对 GOAL-3、「口令校验」）校验不发送 StartTransaction，只以 EndSession 收尾。
 - AC-009（对 GOAL-2、「报文与原子编码契约」）报文头三个长度域与总长公式匹配；`Set` 类 InvokingID 为目标对象 UID。
-- AC-010（对 GOAL-4、「UI 主窗口与口令对话框」）主窗口五个模板子件存在；口令输入不回显；提交后口令缓冲被 zeroize。
+- AC-010（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备卡、锁定徽章、操作区与反馈区子件存在；诊断页有只读列表与脱敏导出；`.ui` 不含文案字面量；口令输入不回显；提交后口令缓冲被 zeroize。
 - AC-011（对 GOAL-4、「线程模型与错误呈现」）协议操作在工作线程执行；UI 单帧阻塞不超过 100 ms；并发触发得到忙错误。
 - AC-012（对 GOAL-5、NFR 安全）口令不出现在日志、剪贴板与任何持久化文件；诊断导出后再过滤。
 - AC-013（对 GOAL-5、「口令设置 / 修改 / 删除」）三个入口均返回证据缺口错误，且不发送任何命令。
@@ -952,6 +996,8 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D21 | StartSession 报文总长公式的常数为 53（不含口令原子的令牌流长度，含 5 字节状态列表），口令原子按编码表另计；口令 16 字节时总长 128 B | §4.6 | §4.6 出现 `0x38 + 53`；旧常数写法零命中 |
 | D22 | 进度步骤覆盖 §4.7 的 7 条命令：`UnlockStep` 定义 7 个变体（StartTransaction、4 条 `Set`、EndTransaction、EndSession） | §4.13 | §4.13 出现 `UnlockStep` 与“7 个变体”；旧的步数写法零命中（由 manifest 的 D22 禁止规则校验） |
 | D23 | 接口承载：§4.7 的五个 payload 函数显式接收 `base_comid: u16`、`&SessionIds` 与 `StatusListForm`；`SessionIds` 只承载 TSN/HSN，不得含 ComID；状态列表形态参数化 | §4.7、§4.10 | 五个函数签名均含 `base_comid` 与 `form`；正文声明 `SessionIds` 不含 ComID |
+| D24 | 命名体系：crate 前缀 `t7-` 改为 `magi-`（`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`），主程序二进制名 `magi`，应用显示名 `MagiShield`，应用 ID `dev.rikki.MagiShield`（显示名与 ID 为暂定值，调整时按变更流程更新）；spec 目录名本轮不改 | §3.1、§4.12、§5、§10 | 旧 crate 前缀与旧标识符零命中（由 manifest 的 D24 禁止规则校验）；manifest 的 globs 与屏障命令指向 `magi-*`；§4.12 出现 `MagiShield` 与 APP_ID |
+| D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（仪表盘 / 诊断 / 关于，当前项有选中态）+ 仪表盘区（设备卡、锁定状态徽章、操作区、进度与结果反馈）+ 诊断页（环形缓冲只读列表、脱敏导出）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.12、§8 | 布局契约表与六条验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
 
 ## 10. 验证
 
@@ -962,31 +1008,34 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 
 | 锚点 | 目标位置 | 覆盖 |
 |---|---|---|
-| `test_level0_parses_base_comid` | `crates/t7-protocol` | ComID 运行时解析、描述符遍历、过短响应、无 Opal SSC 描述符 |
-| `test_start_session_frame_golden` | `crates/t7-protocol` | StartSession 令牌流黄金向量 |
-| `test_session_ids_swap_mapping` | `crates/t7-protocol` | TSN/HSN 映射与错误映射的后果 |
-| `test_empty_response_is_fatal` | `crates/t7-protocol` | 空应答致命判定 |
-| `test_password_rejected_status_byte_one` | `crates/t7-protocol` | 口令错误的状态字节判定 |
-| `test_set_datastore_row_two_frame_golden` | `crates/t7-protocol` | 第 4 条 `Set` 的逐字节模板 |
-| `test_unexpected_response_length_rejected` | `crates/t7-protocol` | 应答长度与期望值不符时的拒绝 |
-| `test_unsupported_security_protocol` | `crates/t7-protocol` | 0xFD 协议字节与 sense `03/11/00` 的拒绝路径 |
-| `test_password_write_operations_are_unspecified` | `crates/t7-protocol` | 口令写操作返回证据缺口错误且不下发命令 |
-| `test_session_closed_on_abort` | `crates/t7-protocol` | 中止路径尽力 EndSession、失败只记录 |
-| `test_macos_transport_unavailable` | `crates/t7-transport` | macOS 描述符侦察与通道不可用 |
-| `test_command_timeout_maps_to_timeout_error` | `crates/t7-transport` | 单命令超时到超时错误的映射 |
-| `test_device_gone_during_reenumeration` | `crates/t7-transport` | 重枚举期间设备节点消失的容忍 |
-| `test_locked_device_actions_disabled` | `crates/t7-app` | 设备态驱动的入口启用与禁用 |
-| `test_unknown_pid_is_rejected` | `crates/t7-app` | 非目标 PID 被拒绝且不下发命令 |
-| `test_empty_password_rejected` | `crates/t7-app` | 空口令被拒绝且不构造报文 |
-| `test_duplicate_trigger_is_busy` | `crates/t7-app` | 单飞约束下的忙错误 |
-| `test_password_zeroized_after_submit` | `crates/t7-app` | 提交后口令缓冲被 zeroize |
+| `test_level0_parses_base_comid` | `crates/magi-protocol` | ComID 运行时解析、描述符遍历、过短响应、无 Opal SSC 描述符 |
+| `test_start_session_frame_golden` | `crates/magi-protocol` | StartSession 令牌流黄金向量 |
+| `test_session_ids_swap_mapping` | `crates/magi-protocol` | TSN/HSN 映射与错误映射的后果 |
+| `test_empty_response_is_fatal` | `crates/magi-protocol` | 空应答致命判定 |
+| `test_password_rejected_status_byte_one` | `crates/magi-protocol` | 口令错误的状态字节判定 |
+| `test_set_datastore_row_two_frame_golden` | `crates/magi-protocol` | 第 4 条 `Set` 的逐字节模板 |
+| `test_unexpected_response_length_rejected` | `crates/magi-protocol` | 应答长度与期望值不符时的拒绝 |
+| `test_unsupported_security_protocol` | `crates/magi-protocol` | 0xFD 协议字节与 sense `03/11/00` 的拒绝路径 |
+| `test_password_write_operations_are_unspecified` | `crates/magi-protocol` | 口令写操作返回证据缺口错误且不下发命令 |
+| `test_session_closed_on_abort` | `crates/magi-protocol` | 中止路径尽力 EndSession、失败只记录 |
+| `test_macos_transport_unavailable` | `crates/magi-transport` | macOS 描述符侦察与通道不可用 |
+| `test_command_timeout_maps_to_timeout_error` | `crates/magi-transport` | 单命令超时到超时错误的映射 |
+| `test_device_gone_during_reenumeration` | `crates/magi-transport` | 重枚举期间设备节点消失的容忍 |
+| `test_locked_device_actions_disabled` | `crates/magi-app` | 设备态驱动的入口启用与禁用 |
+| `test_unknown_pid_is_rejected` | `crates/magi-app` | 非目标 PID 被拒绝且不下发命令 |
+| `test_empty_password_rejected` | `crates/magi-app` | 空口令被拒绝且不构造报文 |
+| `test_duplicate_trigger_is_busy` | `crates/magi-app` | 单飞约束下的忙错误 |
+| `test_password_zeroized_after_submit` | `crates/magi-app` | 提交后口令缓冲被 zeroize |
+| `test_sidebar_navigation_items` | `crates/magi-app` | 侧边栏导航项 ≥ 3 且当前项选中态唯一 |
+| `test_lock_badge_matches_device_state` | `crates/magi-app` | 锁定状态徽章与 `DeviceState` 一一对应 |
+| `test_diagnostics_export_is_redacted` | `crates/magi-app` | 诊断导出内容经口令脱敏 |
 
 兼容/迁移屏障表（条件 / 满足标准 / 验收证据）：
 
 | 屏障 | 条件 | 满足标准 | 验收证据 |
 |---|---|---|---|
-| 协议层黄金向量 | `crates/t7-protocol` 存在 | 帧构造与解析测试全部通过，黄金向量与 §4 一致 | `python tools/barriers.py` 中协议层屏障 PASS |
-| 传输层契约 | `crates/t7-transport` 存在 | trait 契约测试通过，macOS 分支返回通道不可用 | 同上，传输层屏障 PASS |
-| 应用层冒烟 | `crates/t7-app` 存在 | UI 模板装载、入口启用规则与口令清除测试通过 | 同上，应用层屏障 PASS |
+| 协议层黄金向量 | `crates/magi-protocol` 存在 | 帧构造与解析测试全部通过，黄金向量与 §4 一致 | `python tools/barriers.py` 中协议层屏障 PASS |
+| 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，macOS 分支返回通道不可用 | 同上，传输层屏障 PASS |
+| 应用层冒烟 | `crates/magi-app` 存在 | UI 模板装载（侧边栏导航、徽章、诊断页、关于页）、入口启用规则、导出脱敏与口令清除测试通过 | 同上，应用层屏障 PASS |
 
-**当前状态（Draft）**：三个目标 crate 尚未创建，`barriers.py` 如实输出未接线状态并以非零退出码结束；`code_contracts` 与 `test_anchors` 未命中时审计降级为 warning，不阻断。切换到 Authoritative 的条件是：三个 crate 落地、上表锚点全部可 grep、`barriers.py` 全绿，且与代码同批提交。
+**当前状态（Draft）**：`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app` 尚未落地全部契约与锚点，`barriers.py` 如实输出未接线或环境缺工具链状态并以非零退出码结束；`code_contracts` 与 `test_anchors` 未命中时审计降级为 warning，不阻断。切换到 Authoritative 的条件是：三个 crate 落地、上表锚点全部可 grep、`barriers.py` 全绿，且与代码同批提交。
