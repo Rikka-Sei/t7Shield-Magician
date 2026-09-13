@@ -28,7 +28,7 @@ python tools/barriers.py          # 最后跑验收屏障（draft 下如实报�
 1. **路径**：manifest 位于 `docs/specs/t7-magician/tools/`，因此 `spec_file = "../spec.md"`、`repo_root = "../../../.."`（屏障命令以仓库根为工作目录执行）。
 2. **测试锚点同时认 Rust**：`audit_spec.py` 的锚点匹配从 `func NAME(` 放宽为 `(?:func|fn) NAME(`。模板只认 Go，而本 spec 的目标实现是 Rust crate，不放宽则锚点在代码落地后永远无法命中。
 3. **新增规则均有负例**：`test_audit_spec.py` 在模板 11 个用例之外新增 6 个用例，覆盖模板原本没有 fixture 的规则（`metadata_terms` 缺失、`scoped_terms` 越界、`forbidden_occurrences` 命中、`required_occurrences` 计数不足）以及 Go/Rust 两种锚点形式的正向命中。
-4. **屏障在 draft 下的语义**：三条屏障分别探测 `crates/t7-protocol`、`crates/t7-transport`、`crates/t7-app`；crate 不存在时打印 `[planned] …` 并以退出码 3 结束。这是**如实报告未接线**，不是失败被掩盖——`barriers.py` 会因此返回非零，符合 draft 状态。
+4. **屏障在 draft 下的语义**：三条屏障分别探测 `crates/t7-protocol`、`crates/t7-transport`、`crates/t7-app`，并按退出码区分三种如实状态——`0` = 测试真实通过；`3` = crate 尚未创建（未接线，打印 `[planned] …`）；`4` = 当前 shell 缺少 `cargo`（打印 `[blocked] …`，需在 nix devshell 或 `nix develop` 内运行）。`barriers.py` 会把非零码直接上抛，不做任何掩盖。
 
 ## 变更规则
 

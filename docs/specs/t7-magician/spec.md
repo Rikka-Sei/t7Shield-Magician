@@ -1,7 +1,7 @@
 # t7 Shield GUI 客户端（t7-magician）— 权威规格（Spec）
 
 **状态:** Draft（未接线：目标 crate `crates/t7-protocol`、`crates/t7-transport`、`crates/t7-app` 尚未创建，代码契约与测试锚点指向目标实现，审计命中降级为 warning）
-**版本:** 0.1（决策基线：D01–D17）
+**版本:** 0.1（决策基线：D01–D23）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与平台行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -72,6 +72,9 @@
 | 黄金向量 | 由官方实现逐字节还原、在测试中固定比对的期望字节串 | 参考样例、fixture 值 |
 | 呈现码 | UI 与诊断输出使用的稳定错误标识字符串，与 `AppError` 变体一一对应 | 错误标题、UI 错误名 |
 | `token[i]` | 响应令牌流中按 §4.10 遍历顺序编号（从 0 起）的第 i 个原子 | 第 i 个元素 |
+| `StatusListForm` | 状态列表形态的选择类型：`Single` = 5 字节单列表，`Two` = 10 字节双列表；选择规则见 §4.7 | 状态列表变体、列表模式 |
+| `UnlockStep` | 进度步骤类型，与 §4.7 的 7 条命令一一对应 | 进度项、步骤枚举 |
+| `TransportError::Platform` | 承载平台原始错误码（如 IOKit `kern_return_t`）的传输层变体；SCSI 语义错误走 `ScsiCheckCondition` | 平台异常、未知传输错误 |
 
 ## 3. 系统模型与状态机
 
@@ -242,11 +245,12 @@ pub fn identify_device(vid: u16, pid: u16) -> Option<DeviceState>;
 
 > **作为** 用户，**我希望** 客户端在任何型号上都从设备读取真实 ComID，**以便** 不在代码里写死某一台设备的实测值。
 > **优先级:** P0
-> **归因:** D03
+> **归因:** D03、D20
 > **验收标准:**
 > - Given 设备可打开传输通道；When 发送 discovery 的 SECURITY PROTOCOL IN；Then 用固定 SP specific `0x0001`、分配长度 4096 B，即 CDB 字节 `A2 01 00 01 00 00 00 00 10 00 00 00`。
 > - Given 响应长度 ≥ `0x31`；When 从偏移 `0x30` 起遍历描述符；Then 取 Opal SSC V2.00 描述符（feature `0x0203`）`+4` 处的 BE16 作为 ComID，并解析 Locking 描述符（feature `0x0002`）`+4` 的 flags 字节。
 > - Given 响应长度 < `0x31` 或不含 Opal SSC 描述符；When 解析；Then 返回 §5 对应错误，禁止后续命令。
+> - Given 描述符遍历进行中；When 命中任一终止条件；Then 立即停止遍历并保留已解析的描述符，不把终止项当作特性描述符。
 
 契约：
 
@@ -258,7 +262,8 @@ pub struct Discovery {
     pub descriptors: Vec<FeatureDescriptor>,
 }
 
-/// 描述符遍历：从 0x30 起，每项 {BE16 feature, u8 version, u8 len} + len 字节，步长 4 + len。
+/// 描述符遍历：从 0x30 起，每项 {BE16 feature, u8 version, u8 len} + len 字节，步长 4 + len；
+/// 终止条件见表（0x0000 终止项 / 剩余不足 4 字节 / 4 + len 越界）。
 pub fn parse_level0(buf: &[u8]) -> Result<Discovery, ProtocolError>;
 
 impl LockingFlags {
@@ -268,6 +273,14 @@ impl LockingFlags {
 }
 ```
 
+描述符遍历终止条件（三者任一命中即停止；真机 fixture 的描述符区以 `0x0000` 终止项结尾）：
+
+| 终止条件 | 判据 | 处置 |
+|---|---|---|
+| 终止项 | 下一项 feature == `0x0000` | 停止遍历，不记录该终止项 |
+| 尾部不完整 | 当前位置到响应尾部的剩余字节不足 4 字节 | 停止遍历，不读取 |
+| 长度越界 | 当前位置 + 4 + len 超出响应长度 | 停止遍历，不读取越界部分 |
+
 正常示例：锁定态实测 flags 字节为 `0x1F`（`locked() == true`）；解锁态为 `0x3B`（`locked() == false`、`mbr_done() == true`）。
 异常示例：响应长度 16 字节 → `Err(ProtocolError::DiscoveryTooShort { len: 16 })`；长度足够但只有 TPer 与 Locking 描述符 → `Err(ProtocolError::NoOpalSscDescriptor)`；有 Opal SSC 描述符但缺 Locking 描述符 → `Err(ProtocolError::LockingDescriptorMissing)`（此时 `LockingFlags` 保持未取得，禁止推断锁定状态）。
 
@@ -275,7 +288,7 @@ impl LockingFlags {
 
 > **作为** 开发，**我希望** 协议层只依赖一个收发 12 字节 CDB 的 trait，**以便** Linux 与 macOS 各自实现平台通道而不影响协议层。
 > **优先级:** P0
-> **归因:** D07
+> **归因:** D07、D18
 > **验收标准:**
 > - Given 协议层需要一次 SECURITY PROTOCOL IN/OUT；When 构造请求；Then CDB 为 12 字节，字节布局与 §4 的表格逐字节一致，且只允许这两类 CDB 通过该 trait 下发。
 > - Given 实现返回的传输字节数与分配长度不符；When 解析；Then 返回 §5 对应错误，不得按截断数据继续解析。
@@ -288,6 +301,17 @@ pub struct ScsiCdb(pub [u8; 12]);
 pub enum Direction { In, Out }
 
 pub enum DeviceTarget { LinuxSg(String), MacOsUsb { vid: u16, pid: u16 } }
+
+/// 传输层错误：SCSI 语义错误与平台错误码分列，平台码由 Platform 兜底承载。
+pub enum TransportError {
+    Unavailable,                        // 平台通道不存在（macOS 盘操作、通道缺失）
+    PermissionDenied,
+    DeviceGone,
+    Timeout { elapsed: Duration },
+    ShortResponse { got: usize },
+    ScsiCheckCondition { sense: SenseData },
+    Platform { code: i64 },             // IOKit kern_return_t 等平台原始错误码
+}
 
 pub trait Transport: Send {
     fn open(target: &DeviceTarget) -> Result<Self, TransportError> where Self: Sized;
@@ -356,7 +380,7 @@ pub struct SenseData { pub response_code: u8, pub sense_key: u8, pub asc: u8, pu
 
 > **作为** macOS 用户，**我希望** 客户端明确告诉我这台机器上能否操作磁盘，**以便** 不把平台限制误当成操作失败。
 > **优先级:** P0
-> **归因:** D08
+> **归因:** D08、D19
 > **验收标准:**
 > - Given 运行在 macOS 且设备已接入；When 客户端启动并做描述符侦察；Then 显示出设备 VID/PID 与接口描述（BOT 备用设置 proto `0x50`、UAS 备用设置 proto `0x62`）。
 > - Given 用户发起任何盘操作（解锁、口令校验）；When 客户端判断当前平台通道；Then 立即返回 `TransportError::Unavailable`（UI 呈现码 `TransportUnavailable`），不发送任何 SCSI 命令、不重试，UI 呈现明确错误文案。
@@ -382,11 +406,39 @@ impl Transport for MacOsDiscovery {
     }
 }
 
+pub struct Endpoint {
+    pub address: u8,             // 端点地址（含方向位，例如 0x81 / 0x02）
+    pub attributes: u8,          // bmAttributes（0x02 = bulk）
+    pub max_packet_size: u16,    // wMaxPacketSize
+}
+
+pub struct AlternateSetting {
+    pub interface_number: u8,    // bInterfaceNumber
+    pub alternate_setting: u8,   // bAlternateSetting
+    pub class: u8,               // bInterfaceClass（0x08 = Mass Storage）
+    pub subclass: u8,            // bInterfaceSubClass（0x06 = SCSI）
+    pub protocol: u8,            // bInterfaceProtocol（0x50 = BOT，0x62 = UAS）
+    pub endpoints: Vec<Endpoint>,
+}
+
 pub struct UsbDescriptorSummary {
     pub vid: u16, pub pid: u16,
-    pub alternate_settings: Vec<AlternateSetting>, // class 0x08 / subclass 0x06 / proto 0x50 或 0x62
+    pub alternate_settings: Vec<AlternateSetting>,
 }
 ```
+
+描述符侦察的字段定义（唯一权威定义；字段名与 USB 描述符字段一一对应）：
+
+| 类型 | 字段 | 来源 | 取值约束 |
+|---|---|---|---|
+| `UsbDescriptorSummary` | `vid` / `pid` | 设备描述符 `idVendor` / `idProduct` | 仅 `0x04e8` + `0x61fc`/`0x61fb` 被识别（§4.1） |
+| `UsbDescriptorSummary` | `alternate_settings` | 配置描述符内的接口/备用设置序列 | 至少 1 项；顺序按描述符出现顺序 |
+| `AlternateSetting` | `interface_number` | `bInterfaceNumber` | — |
+| `AlternateSetting` | `alternate_setting` | `bAlternateSetting` | 本设备实测 0 与 1 |
+| `AlternateSetting` | `class` / `subclass` | `bInterfaceClass` / `bInterfaceSubClass` | 本设备实测均为 `0x08` / `0x06` |
+| `AlternateSetting` | `protocol` | `bInterfaceProtocol` | 本设备实测 `0x50`（BOT）与 `0x62`（UAS） |
+| `AlternateSetting` | `endpoints` | 该备用设置下的端点描述符 | 每项按出现顺序；BOT 备用设置实测 2 项（`0x81` IN、`0x02` OUT，bulk/1024） |
+| `Endpoint` | `address` / `attributes` / `max_packet_size` | `bEndpointAddress` / `bmAttributes` / `wMaxPacketSize` | `attributes` 为 `0x02` 时是 bulk 端点 |
 
 正常示例：`MacOsDiscovery::enumerate(0x04e8, 0x61fc)` → 返回 1 个配置、1 个接口、2 个备用设置（`0x50`、`0x62`），并列出端点。
 异常示例：任何 `execute` 调用 → `Err(TransportError::Unavailable)`，UI 文案为「macOS 上无可用 SCSI 通道（已证实平台限制）」，并给出 `issues/2026-09-14-macOS传输通道.md` 的指针。
@@ -395,7 +447,7 @@ pub struct UsbDescriptorSummary {
 
 > **作为** 用户，**我希望** 客户端用我的口令建立一次 LOCKINGSP 管理会话，**以便** 获得后续解锁序列所需的会话号。
 > **优先级:** P0
-> **归因:** D02、D04
+> **归因:** D02、D04、D21
 > **验收标准:**
 > - Given 已解析出 baseComID；When 发送 StartSession；Then 报文头 `+0x14`（TSN）与 `+0x18`（HSN）均为 0，令牌流按 §4.6 的逐字节模板构造。
 > - Given 设备应答；When 解析；Then 期望 `data_len = 37`、状态列表中的方法状态字节为 `0`；随后从响应的 token[4] 与 token[5] 按 §4.6 的映射表导出 HSN 与 TSN。
@@ -437,6 +489,8 @@ StartSession 令牌流（放在报文 `+0x38` 起；符号含义见 §4.10 的�
 | 12 | `F3` `F1` `F9` | ENDNAME + ENDLIST + ENDOFDATA |
 | 13 | `F0 00 00 00 F1` | 状态列表占位 |
 
+报文总长公式（唯一权威定义）：`(0x38 + 53 + pwd_atom_len + 3) & ~3`，其中 53 为不含口令原子的令牌流长度（含 5 字节状态列表），`pwd_atom_len` = `1 + len(口令)`（len ≤ 15）或 `2 + len(口令)`（16 ≤ len ≤ 2047）。
+
 会话号映射（唯一权威定义；本设备实测值随实现不同而变化）：
 
 | 响应位置 | 目标字段 | 语义 | 实测值 |
@@ -446,18 +500,19 @@ StartSession 令牌流（放在报文 `+0x38` 起；符号含义见 §4.10 的�
 
 token 数值按 64 位原子解码后取低 32 位，再按大端写成 4 字节（8 字节原子按小端解释，见 §4.10 的响应解析规则）。
 
-正常示例：口令 16 字节时，OUT 报文总长为 `(0x38 + 54 + 16 + 3) & ~3 = 128` 字节，应答 `data_len = 37`、方法状态字节 `0`，得到 TSN `00 00 10 1A`、HSN `00 00 00 01`。
+正常示例：口令 16 字节时，令牌流不含口令原子的部分为 53 字节，口令原子为 18 字节（中字节串 `D0 10` + 16 字节），故 OUT 报文总长为 `(0x38 + 53 + 18 + 3) & ~3 = 128` 字节，应答 `data_len = 37`、方法状态字节 `0`，得到 TSN `00 00 10 1A`、HSN `00 00 00 01`。
 异常示例：口令错误时 SCSI 状态仍为 GOOD，但方法状态字节为 `1`，`data_len` 仍为 37 → `Err(ProtocolError::SessionRejected { status_byte: 1 })`。
 
 ### 4.7 REQ-007 解锁事务序列（StartTransaction + 4×Set + 收尾）
 
 > **作为** 用户，**我希望** 客户端按设备要求的顺序提交 4 条 `Set` 并收尾，**以便** 设备切换到解锁态。
 > **优先级:** P0
-> **归因:** D05、D06、D17
+> **归因:** D05、D06、D17、D23
 > **验收标准:**
 > - Given 会话已建立（TSN/HSN 就绪）；When 依次发送 StartTransaction、4 条 `Set`、EndTransaction、EndSession；Then 每条命令各为一次 OUT + 一次 IN，会话内命令的报文头 `+0x14` = TSN、`+0x18` = HSN。
 > - Given 4 条 `Set` 的令牌流；When 构造；Then 目标对象 UID、列号与取值与 §4.7 表格逐字节一致，且不追加任何额外 `Set`。
 > - Given 任一 `Set` 的应答 `data_len = 0`、无状态列表；When 解析；Then 判致命（§5 的 `EmptyResponse`），终止序列并尽力关闭会话。
+> - Given 构造任一会话内帧；When 调用 payload 函数；Then 显式传入 baseComID、`SessionIds` 与 `StatusListForm`，报文头 `+0x04` 填该 ComID，`SessionIds` 内不含 ComID。
 
 契约：
 
@@ -465,12 +520,17 @@ token 数值按 64 位原子解码后取低 32 位，再按大端写成 4 字节
 pub struct SetCell { pub object: Uid, pub column: u8, pub value: u8 }
 pub struct SetRow  { pub object: Uid, pub row: u64, pub value: Vec<u8> }
 
-pub fn start_transaction_payload(base_comid: u16, ids: &SessionIds) -> Vec<u8>;   // FB 00 + 状态列表
-pub fn set_cell_payload(c: &SetCell, ids: &SessionIds) -> Vec<u8>;
-pub fn set_row_payload(r: &SetRow, ids: &SessionIds) -> Vec<u8>;
-pub fn end_transaction_payload(ids: &SessionIds) -> Vec<u8>;                       // FC 00 + 状态列表
-pub fn end_session_payload(ids: &SessionIds) -> Vec<u8>;                           // FA + 状态列表
+pub fn start_transaction_payload(base_comid: u16, ids: &SessionIds, form: StatusListForm) -> Vec<u8>;   // FB 00
+pub fn set_cell_payload(base_comid: u16, ids: &SessionIds, form: StatusListForm, cell: &SetCell) -> Vec<u8>;
+pub fn set_row_payload(base_comid: u16, ids: &SessionIds, form: StatusListForm, row: &SetRow) -> Vec<u8>;
+pub fn end_transaction_payload(base_comid: u16, ids: &SessionIds, form: StatusListForm) -> Vec<u8>;      // FC 00
+pub fn end_session_payload(base_comid: u16, ids: &SessionIds, form: StatusListForm) -> Vec<u8>;          // FA
+
+/// 状态列表形态（§4.10）：Single = 5 字节 `F0 00 00 00 F1`，Two = 该序列重复两次（10 字节）。
+pub enum StatusListForm { Single, Two }
 ```
+
+五个 payload 函数显式接收 ComID 入参 `base_comid`、会话号 `&SessionIds` 与形态 `StatusListForm`：`SessionIds` 只承载 TSN/HSN 两个会话号，ComID 与状态列表形态一律作为独立入参传入，不得塞进 `SessionIds`。
 
 4 条 `Set` 的固定参数（顺序不可变）：
 
@@ -490,6 +550,8 @@ pub fn end_session_payload(ids: &SessionIds) -> Vec<u8>;                        
 | StartTransaction | `FB 00` + 状态列表（`00` 为 tiny uint，事务号取 0） | 64 B |
 | EndTransaction | `FC 00` + 状态列表（成功路径 token 为 `0`；官方实现按「非零即失败」从会话结果取该字节） | 64 B |
 | EndSession | `FA` + 状态列表（状态列表之后不再有字节） | 64 B |
+
+状态列表形态选择（唯一权威定义）：StartSession 帧使用 `StatusListForm::Single`；解析 StartSession 应答时，若应答尾部为 10 字节双列表形态（`F0 00 00 00 F1 F0 00 00 00 F1`）则本次操作改用 `StatusListForm::Two`，否则保持 `Single`；该判定在每次操作开始时重新执行一次，单次操作内不再改变；形态不改变方法状态字节的取法（始终取 `data[data_len − 4]`，见 §4.10 的响应解析规则）。
 
 正常示例：报文总长 StartTransaction/EndTransaction/EndSession 各 64 B、每条 `Set` 92 B，全部方法状态字节为 `0`。
 异常示例：第 2 条 `Set` 应答 `data_len = 0` → `Err(ProtocolError::EmptyResponse { step: SetReadLocked })`，客户端终止序列并把该次操作标记为致命失败。
@@ -554,7 +616,7 @@ pub struct ValidateOutcome { pub accepted: bool, pub status_byte: u8 }
 
 > **作为** 开发，**我希望** 有一处权威的编码定义，**以便** 实现与测试引用同一份字节规则。
 > **优先级:** P0
-> **归因:** D01、D04、D17
+> **归因:** D01、D04、D17、D23
 > **验收标准:**
 > - Given 任一命令；When 构造报文；Then 报文头固定 `0x38` 字节，三个长度域按表格填写，总长为 `(0x38 + len(令牌流) + 3) & ~3`。
 > - Given 需要写入 UID、整数或字节串；When 选择原子编码；Then 严格按下列编码表，且不得使用表中未列出的形式。
@@ -602,7 +664,7 @@ pub struct ValidateOutcome { pub accepted: bool, pub status_byte: u8 }
 | `0xFC` | ENDTRANSACTION | 提交事务（后接方法状态 token） |
 | `0xFF` | EMPTYATOM | 省略参数 |
 
-状态列表占位序列为 `F0 00 00 00 F1`（STARTLIST、3 个 tiny `0`、ENDLIST），本规格默认使用该单列表变体；若设备在 StartSession 应答尾部回显 10 字节的双列表形态（`F0 00 00 00 F1 F0 00 00 00 F1`），则从 StartTransaction 起本次操作的全部帧改用双列表变体。该判定在每次操作开始（StartSession 应答解析时）重新执行一次，且单次操作内不再改变。状态列表变体不改变方法状态字节的取法：始终取 `data[data_len − 4]`（双列表形态下同样成立，因为末 5 字节仍是第二个状态列表）。
+状态列表占位序列为 `F0 00 00 00 F1`（STARTLIST、3 个 tiny `0`、ENDLIST）；形态由 `StatusListForm::Single`（该 5 字节序列）与 `StatusListForm::Two`（该序列重复两次，共 10 字节）承载，选择规则见 §4.7。StartSession 自身固定使用 `StatusListForm::Single`（其应答用于判定本次操作的形态，见 §4.7）；判定后从 StartTransaction 起本次操作的全部帧使用同一形态。该判定在每次操作开始（StartSession 应答解析时）重新执行一次，且单次操作内不再改变。状态列表变体不改变方法状态字节的取法：始终取 `data[data_len − 4]`（双列表形态下同样成立，因为末 5 字节仍是第二个状态列表）。
 
 命令使用的 UID 表：
 
@@ -701,15 +763,26 @@ pub struct Password(Zeroizing<Vec<u8>>);   // 提交后由 zeroize 清除
 
 > **作为** 用户，**我希望** 界面在协议操作期间保持可交互，**以便** 我能看到进度并在失败时得到可操作的错误提示。
 > **优先级:** P0
-> **归因:** D15、D16
+> **归因:** D15、D16、D22
 > **验收标准:**
-> - Given 任一协议操作；When 执行；Then 在工作线程执行，结果与进度经 channel 投递回主线程更新 UI，UI 主线程单帧阻塞不超过 §6 的上界。
+> - Given 任一协议操作；When 执行；Then 在工作线程执行，进度以 `UnlockStep` 的 7 个变体、结果与错误以 `AppEvent` 经 channel 投递回主线程更新 UI，UI 主线程单帧阻塞不超过 §6 的上界。
 > - Given 同一设备已有操作在执行；When 用户再次触发操作；Then 拒绝新请求（`AppError::Busy`），不并发下发命令。
 > - Given 操作失败；When 呈现；Then 呈现 §5 的错误分类、一句原因与一句建议动作；文案经 i18n 键渲染。
 
 契约：
 
 ```rust
+/// 进度步骤：与 §4.7 的 7 条命令一一对应（Discovery 与 StartSession 之后）。
+pub enum UnlockStep {
+    StartTransaction,
+    SetMbrDone,
+    SetReadLocked,
+    SetWriteLocked,
+    SetDataStoreRow2,
+    EndTransaction,
+    EndSession,
+}
+
 pub enum AppEvent {
     Progress { step: UnlockStep },
     Finished { evidence: Option<UnlockEvidence> },
@@ -729,7 +802,7 @@ pub fn spawn_device_job<F>(dev: DeviceId, job: F) -> Result<(), AppError>
 where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> + Send + 'static;
 ```
 
-正常示例：解锁过程中 `Progress` 事件按 §4.7 的 6 类步骤序列推进，UI 依次刷新。
+正常示例：解锁过程中 `Progress` 事件按 `UnlockStep` 的 7 个变体依次推进（顺序与 §4.7 的 7 条命令一致），UI 依次刷新。
 异常示例：操作进行中再次点击「解锁」→ 立即 `AppError::Busy`，UI 呈现「已有操作在执行」，不下发第二条命令。
 
 呈现码（i18n 键与诊断输出的稳定标识；与 `AppError` 变体一一对应，不得另起别名）：
@@ -741,7 +814,10 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | `Transport(TransportError::Unavailable)` | `TransportUnavailable` |
 | `Transport(TransportError::DeviceGone)` | `DeviceGone` |
 | `Transport(TransportError::Timeout)` | `CommandTimeout` |
-| `Transport(_)` | `TransportFailure` |
+| `Transport(TransportError::Platform { .. })` | `TransportFailure` |
+| `Transport(TransportError::PermissionDenied)` | `TransportFailure` |
+| `Transport(TransportError::ShortResponse { .. })` | `TransportFailure` |
+| `Transport(TransportError::ScsiCheckCondition { .. })` | `TransportFailure` |
 | `Protocol(ProtocolError::EmptyResponse { .. })` | `EmptyResponse` |
 | `Protocol(ProtocolError::PasswordOperationUnspecified)` | `PasswordOperationUnspecified` |
 | `Protocol(_)` | `ProtocolFailure` |
@@ -759,6 +835,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | `TransportError::Timeout` | `t7-transport` | 单条命令超过 §6 的超时 | 独立变体，携带实际耗时 | UI 提示超时；协议层不做自动重放（D11） |
 | `TransportError::ShortResponse { got }` | `t7-transport` | 返回字节数不足以构成 `0x38` 字节报文头 | 独立变体 | 协议层拒绝解析，UI 呈现传输错误 |
 | `TransportError::ScsiCheckCondition { sense }` | `t7-transport` | SCSI 状态为 CHECK CONDITION | 包装 `SenseData` | 协议层判定：sense `03/11/00` = 通道不存在（`UnsupportedSecurityProtocol`） |
+| `TransportError::Platform { code }` | `t7-transport` | 平台调用返回非 SCSI 语义的错误码（例如 IOKit `kern_return_t`），或既非 GOOD 也非 CHECK CONDITION 的完成状态 | 独立变体，`code` 保存平台原始值 | UI 以呈现码 `TransportFailure` 呈现，并保留平台码供诊断（D18） |
 | `ProtocolError::DiscoveryTooShort { len }` | `t7-protocol` | Discovery 响应长度 < `0x31` | 独立变体 | UI 呈现「设备不接受 discovery」，停止后续操作 |
 | `ProtocolError::NoOpalSscDescriptor` | `t7-protocol` | 描述符区无 feature `0x0203` 项 | 独立变体 | 同上，并提示该设备不走 A 路 |
 | `ProtocolError::LockingDescriptorMissing` | `t7-protocol` | 描述符区有 Opal SSC 项但无 Locking（feature `0x0002`）项 | 独立变体 | 呈现「无法判定锁定状态」，入口保持禁用 |
@@ -783,7 +860,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 
 - **性能**
   - 单条 SCSI 命令超时 30 s（与官方客户端 `w4 = 0x1e` 一致）；超时后不再等待该命令。
-  - 解锁全流程（Discovery + StartSession + StartTransaction + 4×`Set` + EndTransaction + EndSession，共 10 条命令）P95 ≤ 30 s（不含重枚举等待）。
+  - 解锁全流程（Discovery + StartSession + StartTransaction + 4×`Set` + EndTransaction + EndSession，共 9 条命令）P95 ≤ 30 s（不含重枚举等待）。
   - 设备重枚举观察窗口 30 s：每 500 ms 轮询一次，最多 60 次；窗口耗尽即按 §4 判据给出结论。
   - UI 主线程单帧阻塞 ≤ 100 ms；所有协议 I/O 在工作线程。
 - **可用性**
@@ -868,7 +945,13 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D14 | 口令设置/修改/删除在当前证据状态下不定义字节序列：调用返回 `PasswordOperationUnspecified`，证据缺口登记在 `issues/` | §1.3、§4 | 契约章节出现 `SetPassword` 与 `issues/` 指针；实现返回该错误 |
 | D15 | 协议操作在工作线程执行，结果经 channel 回主线程；UI 主线程单帧阻塞 ≤ 100 ms；同设备单飞 | §4、§6 | `100 ms` 量化出现；忙错误契约存在 |
 | D16 | 国际化：默认 `zh-CN`，提供 `en` 资源；用户可见文案全部走 i18n 键 | §6 | `zh-CN` 出现在 NFR；代码无内联可显示字符串 |
-| D17 | 帧构造一致性：`FB`/`FC`/`FA` 统一携带状态列表（`FC` 的成功 token 为 `0`）；状态列表形态按 StartSession 应答回显在单列表（`F0 00 00 00 F1`）与双列表变体间选择，单次操作内不变；方法状态字节始终取 `data[data_len − 4]` | §4 | 令牌流黄金向量固定 64 B / 92 B 载荷；`FC 00` 与 `F0 00 00 00 F1` 出现在契约章节 |
+| D17 | 帧构造一致性：`FB`/`FC`/`FA` 统一携带状态列表（`FC` 的成功 token 为 `0`）；状态列表形态按 StartSession 应答回显在 `StatusListForm::Single`（`F0 00 00 00 F1`）与 `StatusListForm::Two`（该序列两次）之间选择，单次操作内不变；方法状态字节始终取 `data[data_len − 4]` | §4 | 令牌流黄金向量固定 64 B / 92 B 载荷；`FC 00` 与 `F0 00 00 00 F1` 出现在契约章节 |
+| D18 | 传输层错误分列：新增兜底变体 `TransportError::Platform { code }` 承载平台原始错误码（IOKit `kern_return_t` 等），呈现码为 `TransportFailure`；SCSI 语义错误仍走 `ScsiCheckCondition` | §4.3、§5 | `TransportError::Platform` 同时出现在 §4.3 契约块与 §5 错误表；呈现码表有对应行 |
+| D19 | macOS 描述符侦察的数据模型：`AlternateSetting` 与 `Endpoint` 字段集固定为接口号/备用设置号/class/subclass/protocol + 端点 {地址, 属性, 最大包长}，字段与 USB 描述符字段一一对应 | §4.5 | §4.5 出现 `AlternateSetting` 与 `max_packet_size`；字段表逐字段给出来源 |
+| D20 | 描述符遍历终止条件：feature == `0x0000` 终止项、剩余不足 4 字节、`4 + len` 越界三者任一命中即停止遍历，且不把终止项记为描述符 | §4.2 | §4.2 出现终止条件表与 `0x0000`；越界条件在正文写明 |
+| D21 | StartSession 报文总长公式的常数为 53（不含口令原子的令牌流长度，含 5 字节状态列表），口令原子按编码表另计；口令 16 字节时总长 128 B | §4.6 | §4.6 出现 `0x38 + 53`；旧常数写法零命中 |
+| D22 | 进度步骤覆盖 §4.7 的 7 条命令：`UnlockStep` 定义 7 个变体（StartTransaction、4 条 `Set`、EndTransaction、EndSession） | §4.13 | §4.13 出现 `UnlockStep` 与“7 个变体”；旧的步数写法零命中（由 manifest 的 D22 禁止规则校验） |
+| D23 | 接口承载：§4.7 的五个 payload 函数显式接收 `base_comid: u16`、`&SessionIds` 与 `StatusListForm`；`SessionIds` 只承载 TSN/HSN，不得含 ComID；状态列表形态参数化 | §4.7、§4.10 | 五个函数签名均含 `base_comid` 与 `form`；正文声明 `SessionIds` 不含 ComID |
 
 ## 10. 验证
 

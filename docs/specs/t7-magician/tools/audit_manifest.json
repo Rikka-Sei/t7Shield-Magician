@@ -15,8 +15,26 @@
     "9. 决策日志",
     "10. 验证"
   ],
-  "metadata_terms": ["状态:", "版本:", "受众:", "范围:", "治理:", "变更历史:"],
-  "vague_terms": ["可能", "大概", "尽量", "友好", "快速", "及时", "合理", "适当", "若干", "支持"],
+  "metadata_terms": [
+    "状态:",
+    "版本:",
+    "受众:",
+    "范围:",
+    "治理:",
+    "变更历史:"
+  ],
+  "vague_terms": [
+    "可能",
+    "大概",
+    "尽量",
+    "友好",
+    "快速",
+    "及时",
+    "合理",
+    "适当",
+    "若干",
+    "支持"
+  ],
   "forbidden_patterns": [
     "（已被\\s*D\\d+\\s*取代）",
     "补丁标记",
@@ -26,19 +44,25 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 17,
+  "latest_decision": 23,
   "decisions": [
     {
       "decision_id": "D01",
-      "required_terms": ["SECURITY PROTOCOL"],
+      "required_terms": [
+        "SECURITY PROTOCOL"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "SECURITY PROTOCOL",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "A 路（TCG 0x01）契约必须逐字节落位在 §4"
         }
       ],
@@ -46,15 +70,22 @@
     },
     {
       "decision_id": "D02",
-      "required_terms": ["HostChallenge"],
+      "required_terms": [
+        "HostChallenge"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "HostChallenge",
-          "count": {"min": 2},
-          "sections": ["4", "9"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4",
+            "9"
+          ],
           "reason": "口令明文即 HostChallenge 的决策必须在契约与决策日志同时可见"
         }
       ],
@@ -62,21 +93,31 @@
     },
     {
       "decision_id": "D03",
-      "required_terms": ["baseComID"],
+      "required_terms": [
+        "baseComID"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "A2 01 00 01",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "discovery CDB 的 SP specific 固定值必须出现在契约章节"
         },
         {
           "pattern": "运行时解析",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "baseComID 必须标注为运行时解析"
         }
       ],
@@ -84,28 +125,40 @@
         {
           "pattern": "ComID\\s*=\\s*0x1004",
           "count": 1,
-          "sections": ["*"],
+          "sections": [
+            "*"
+          ],
           "reason": "实测值 0x1004 不得被写成契约常量"
         }
       ]
     },
     {
       "decision_id": "D04",
-      "required_terms": ["TSN"],
+      "required_terms": [
+        "TSN"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "\\+0x14",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "报文头 TSN 偏移必须逐字节写明"
         },
         {
           "pattern": "\\+0x18",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "报文头 HSN 偏移必须逐字节写明"
         }
       ],
@@ -113,15 +166,21 @@
     },
     {
       "decision_id": "D05",
-      "required_terms": ["data_len"],
+      "required_terms": [
+        "data_len"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "data_len = 0",
-          "count": {"min": 1},
-          "sections": ["5"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "5"
+          ],
           "reason": "空应答致命判定必须在错误模型中给出"
         }
       ],
@@ -129,15 +188,21 @@
     },
     {
       "decision_id": "D06",
-      "required_terms": ["重枚举"],
+      "required_terms": [
+        "重枚举"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "0x3B",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "解锁态 Locking flags 取值必须作为成功判据出现"
         }
       ],
@@ -145,15 +210,21 @@
     },
     {
       "decision_id": "D07",
-      "required_terms": ["sg_io"],
+      "required_terms": [
+        "sg_io"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "sg_io",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "Linux 传输实现必须指名 sg_io"
         }
       ],
@@ -161,15 +232,22 @@
     },
     {
       "decision_id": "D08",
-      "required_terms": ["TransportUnavailable"],
+      "required_terms": [
+        "TransportUnavailable"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "TransportUnavailable",
-          "count": {"min": 2},
-          "sections": ["4", "5"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4",
+            "5"
+          ],
           "reason": "macOS 降级行为必须同时出现在契约与错误模型"
         }
       ],
@@ -177,22 +255,30 @@
         {
           "pattern": "macOS[^\\n]{0,40}(待实现|未实现功能|后续实现)",
           "count": 1,
-          "sections": ["*"],
+          "sections": [
+            "*"
+          ],
           "reason": "已证实的平台限制不得被表述为可实现功能"
         }
       ]
     },
     {
       "decision_id": "D09",
-      "required_terms": ["CompositeTemplate"],
+      "required_terms": [
+        "CompositeTemplate"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "CompositeTemplate",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "UI 技术栈必须以 composite template 形式写入契约"
         }
       ],
@@ -200,15 +286,22 @@
     },
     {
       "decision_id": "D10",
-      "required_terms": ["zeroize"],
+      "required_terms": [
+        "zeroize"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "zeroize",
-          "count": {"min": 2},
-          "sections": ["4", "6"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4",
+            "6"
+          ],
           "reason": "口令内存纪律必须同时出现在契约与 NFR"
         }
       ],
@@ -216,15 +309,21 @@
     },
     {
       "decision_id": "D11",
-      "required_terms": ["自动重放"],
+      "required_terms": [
+        "自动重放"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "自动重放",
-          "count": {"min": 1},
-          "sections": ["6"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
           "reason": "重试边界必须在 NFR 中写明"
         }
       ],
@@ -232,15 +331,21 @@
     },
     {
       "decision_id": "D12",
-      "required_terms": ["FactoryReset"],
+      "required_terms": [
+        "FactoryReset"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "0xFD",
-          "count": {"min": 1},
-          "sections": ["1"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "1"
+          ],
           "reason": "私有通道排除项必须写入 Out of Scope"
         }
       ],
@@ -248,15 +353,21 @@
     },
     {
       "decision_id": "D13",
-      "required_terms": ["ValidatePassword"],
+      "required_terms": [
+        "ValidatePassword"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "ValidatePassword",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "口令校验契约必须在 §4 给出（含与解锁会话的差异）"
         }
       ],
@@ -264,21 +375,31 @@
     },
     {
       "decision_id": "D14",
-      "required_terms": ["PasswordOperationUnspecified"],
+      "required_terms": [
+        "PasswordOperationUnspecified"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "SetPassword",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "口令写操作的证据缺口必须在契约章节显式声明"
         },
         {
           "pattern": "issues/",
-          "count": {"min": 2},
-          "sections": ["*"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "*"
+          ],
           "reason": "未闭环证据缺口必须指向 issues/ 登记文件"
         }
       ],
@@ -286,15 +407,21 @@
     },
     {
       "decision_id": "D15",
-      "required_terms": ["工作线程"],
+      "required_terms": [
+        "工作线程"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "100 ms",
-          "count": {"min": 1},
-          "sections": ["6"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
           "reason": "UI 主线程阻塞上界必须量化"
         }
       ],
@@ -302,15 +429,21 @@
     },
     {
       "decision_id": "D16",
-      "required_terms": ["zh-CN"],
+      "required_terms": [
+        "zh-CN"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "zh-CN",
-          "count": {"min": 1},
-          "sections": ["6"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
           "reason": "i18n 默认语言必须在 NFR 中量化"
         }
       ],
@@ -318,25 +451,286 @@
     },
     {
       "decision_id": "D17",
-      "required_terms": ["状态列表"],
+      "required_terms": [
+        "状态列表"
+      ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
           "pattern": "FC 00",
-          "count": {"min": 1},
-          "sections": ["4"],
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "EndTransaction 的成功 token 必须在帧契约中逐字节写明"
         },
         {
           "pattern": "F0 00 00 00 F1",
-          "count": {"min": 2},
-          "sections": ["4"],
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
           "reason": "状态列表占位序列必须在编码契约中出现"
         }
       ],
       "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D18",
+      "required_terms": [
+        "TransportError::Platform"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "TransportError::Platform",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4",
+            "5"
+          ],
+          "reason": "平台兜底错误变体必须同时出现在契约与错误模型"
+        },
+        {
+          "pattern": "TransportFailure",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4",
+            "5"
+          ],
+          "reason": "呈现码必须与变体一一对应"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "Platform\\s*\\(\\s*ScsiCheckCondition",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "平台码不得与 SCSI 语义错误混用同一变体"
+        }
+      ]
+    },
+    {
+      "decision_id": "D19",
+      "required_terms": [
+        "AlternateSetting"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "AlternateSetting",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "备用设置数据模型必须在 §4.5 定义"
+        },
+        {
+          "pattern": "max_packet_size",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "端点字段集必须逐字段给出"
+        },
+        {
+          "pattern": "0x62",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "UAS 备用设置取值必须写明"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D20",
+      "required_terms": [
+        "0x0000"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "0x0000",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "终止项取值必须写明"
+        },
+        {
+          "pattern": "终止条件",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "遍历终止条件必须成表"
+        },
+        {
+          "pattern": "越界",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "越界终止条件必须写明"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D21",
+      "required_terms": [
+        "0x38 + 53"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "0x38 \\+ 53",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "总长公式常数必须出现（公式与示例各一次）"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "0x38 \\+ 54",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "旧常数写法必须原地删除"
+        }
+      ]
+    },
+    {
+      "decision_id": "D22",
+      "required_terms": [
+        "UnlockStep"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "UnlockStep",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "进度步骤类型必须定义"
+        },
+        {
+          "pattern": "7 个变体",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "变体数必须写明"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "6 类步骤",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "旧步数写法必须原地删除"
+        }
+      ]
+    },
+    {
+      "decision_id": "D23",
+      "required_terms": [
+        "StatusListForm"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "StatusListForm",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "2",
+            "4"
+          ],
+          "reason": "形态选择类型必须在契约与术语表出现"
+        },
+        {
+          "pattern": "base_com_?id|baseComID",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "payload 函数的 ComID 入参必须在正文写明"
+        },
+        {
+          "pattern": "SessionIds",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "SessionIds 的承载边界必须在正文写明"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "(?<![A-Za-z0-9_])(comid|com_id)\\s*:",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "不得引入以 comid 为字段名的会话结构"
+        }
+      ]
     }
   ],
   "code_contracts": [
@@ -344,35 +738,54 @@
       "id": "transport-trait",
       "pattern": "pub trait Transport",
       "count": 1,
-      "source_globs": ["crates/t7-transport/src/**/*.rs"],
+      "source_globs": [
+        "crates/t7-transport/src/**/*.rs"
+      ],
       "reason": "传输层只有一个权威 trait 定义（D07）"
     },
     {
       "id": "transport-unavailable",
       "pattern": "Unavailable",
-      "count": {"min": 1},
-      "source_globs": ["crates/t7-transport/src/**/*.rs"],
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/t7-transport/src/**/*.rs"
+      ],
       "reason": "macOS 降级错误变体必须存在（D08）"
     },
     {
       "id": "protocol-comid-runtime",
       "pattern": "base_comid",
-      "count": {"min": 1},
-      "source_globs": ["crates/t7-protocol/src/**/*.rs"],
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/t7-protocol/src/**/*.rs"
+      ],
       "reason": "ComID 必须作为 discovery 解析结果传递，而非常量（D03）"
     },
     {
       "id": "app-composite-template",
       "pattern": "CompositeTemplate",
-      "count": {"min": 1},
-      "source_globs": ["crates/t7-app/src/**/*.rs"],
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/t7-app/src/**/*.rs"
+      ],
       "reason": "UI 必须使用 composite template（D09）"
     },
     {
       "id": "password-zeroize",
       "pattern": "zeroize",
-      "count": {"min": 1},
-      "source_globs": ["crates/t7-app/src/**/*.rs", "crates/t7-protocol/src/**/*.rs"],
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/t7-app/src/**/*.rs",
+        "crates/t7-protocol/src/**/*.rs"
+      ],
       "reason": "口令缓冲必须 zeroize（D10）"
     }
   ],
@@ -380,92 +793,128 @@
   "test_anchors": [
     {
       "name": "test_level0_parses_base_comid",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_start_session_frame_golden",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_session_ids_swap_mapping",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_empty_response_is_fatal",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_password_rejected_status_byte_one",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_set_datastore_row_two_frame_golden",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_unexpected_response_length_rejected",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_unsupported_security_protocol",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_password_write_operations_are_unspecified",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_session_closed_on_abort",
-      "source_globs": ["crates/t7-protocol/**/*.rs"],
+      "source_globs": [
+        "crates/t7-protocol/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_macos_transport_unavailable",
-      "source_globs": ["crates/t7-transport/**/*.rs"],
+      "source_globs": [
+        "crates/t7-transport/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_command_timeout_maps_to_timeout_error",
-      "source_globs": ["crates/t7-transport/**/*.rs"],
+      "source_globs": [
+        "crates/t7-transport/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_device_gone_during_reenumeration",
-      "source_globs": ["crates/t7-transport/**/*.rs"],
+      "source_globs": [
+        "crates/t7-transport/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_locked_device_actions_disabled",
-      "source_globs": ["crates/t7-app/**/*.rs"],
+      "source_globs": [
+        "crates/t7-app/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_unknown_pid_is_rejected",
-      "source_globs": ["crates/t7-app/**/*.rs"],
+      "source_globs": [
+        "crates/t7-app/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_empty_password_rejected",
-      "source_globs": ["crates/t7-app/**/*.rs"],
+      "source_globs": [
+        "crates/t7-app/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_duplicate_trigger_is_busy",
-      "source_globs": ["crates/t7-app/**/*.rs"],
+      "source_globs": [
+        "crates/t7-app/**/*.rs"
+      ],
       "required": true
     },
     {
       "name": "test_password_zeroized_after_submit",
-      "source_globs": ["crates/t7-app/**/*.rs"],
+      "source_globs": [
+        "crates/t7-app/**/*.rs"
+      ],
       "required": true
     }
   ],
@@ -475,7 +924,7 @@
       "command": [
         "sh",
         "-c",
-        "if [ -d crates/t7-protocol ]; then cargo test -p t7-protocol; else echo '[planned] crates/t7-protocol 尚未创建：协议层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-protocol ]; then cargo test -p t7-protocol; else echo '[planned] crates/t7-protocol 尚未创建：协议层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     },
     {
@@ -483,7 +932,7 @@
       "command": [
         "sh",
         "-c",
-        "if [ -d crates/t7-transport ]; then cargo test -p t7-transport; else echo '[planned] crates/t7-transport 尚未创建：传输层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-transport ]; then cargo test -p t7-transport; else echo '[planned] crates/t7-transport 尚未创建：传输层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     },
     {
@@ -491,7 +940,7 @@
       "command": [
         "sh",
         "-c",
-        "if [ -d crates/t7-app ]; then cargo test -p t7-app; else echo '[planned] crates/t7-app 尚未创建：应用层验收屏障未接线（spec_status=draft）'; exit 3; fi"
+        "if ! command -v cargo >/dev/null 2>&1; then echo '[blocked] cargo 不在 PATH：请在 nix devshell（direnv allow 后）或 nix develop 环境内运行本屏障'; exit 4; fi; if [ -d crates/t7-app ]; then cargo test -p t7-app; else echo '[planned] crates/t7-app 尚未创建：应用层验收屏障未接线（spec_status=draft）'; exit 3; fi"
       ]
     }
   ]
