@@ -481,11 +481,11 @@ graph TD
 - 纯逻辑归属：`SgIoHdr` 构造与 sense 解析调用 `sense.rs`/`errno_map.rs`；轮询走 `reenumeration.rs`（跨平台）。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_device_gone_during_reenumeration()`（**跨平台**，写在 `src/reenumeration.rs`）：用一个脚本化闭包返回 `[Err(DeviceGone), Err(DeviceGone), Ok(sample_with_pid)]`，断言轮询继续、最终采样可见、`DeviceGone` 未被再次上报为致命错误；再断言窗口参数为 30 s/500 ms/≤ 60 次（用注入的 `window`/`interval` 做小尺度等价测试，避免测试真的等 30 s）。
-2. [ ] 写 `build_sg_io_hdr` 的字段填充测试（**跨平台无条件运行**）：`pub fn build_sg_io_hdr(cdb: &ScsiCdb, dir: Direction, data: &mut [u8], timeout: Duration) -> SgIoHdr` 不受 `cfg` 门控（`SgIoHdr` 同理），断言 `dxfer_direction` 取 `SG_DXFER_FROM_DEV`（IN）/`SG_DXFER_TO_DEV`（OUT）、`cmd_len = 12`、`mx_sb_len = 32`、`dxfer_len = data.len()`、`dxferp` 指向 `data`、`timeout = 30000`、`interface_id = 'S'`；`cfg(target_os = "linux")` 只包住真正调用 `ioctl` 的那几行。
-3. [ ] 在 macOS 上运行 `cargo test -p t7-transport` 与 `cargo check -p t7-transport`（确认 `cfg(linux)` 分支被正确剥离、无 warning）。
-4. [ ] Linux 分支的真实验证放入 V01（本机无法执行）。
-5. [ ] 提交：`git commit -S -m "feat: 实现 Linux sg_io 传输、sysfs 扫描与重枚举观察"`。
+1. [x] 写 `fn test_device_gone_during_reenumeration()`（**跨平台**，写在 `src/reenumeration.rs`）：用一个脚本化闭包返回 `[Err(DeviceGone), Err(DeviceGone), Ok(sample_with_pid)]`，断言轮询继续、最终采样可见、`DeviceGone` 未被再次上报为致命错误；再断言窗口参数为 30 s/500 ms/≤ 60 次（用注入的 `window`/`interval` 做小尺度等价测试，避免测试真的等 30 s）。
+2. [x] 写 `build_sg_io_hdr` 的字段填充测试（**跨平台无条件运行**）：`pub fn build_sg_io_hdr(cdb: &ScsiCdb, dir: Direction, data: &mut [u8], timeout: Duration) -> SgIoHdr` 不受 `cfg` 门控（`SgIoHdr` 同理），断言 `dxfer_direction` 取 `SG_DXFER_FROM_DEV`（IN）/`SG_DXFER_TO_DEV`（OUT）、`cmd_len = 12`、`mx_sb_len = 32`、`dxfer_len = data.len()`、`dxferp` 指向 `data`、`timeout = 30000`、`interface_id = 'S'`；`cfg(target_os = "linux")` 只包住真正调用 `ioctl` 的那几行。
+3. [x] 在 macOS 上运行 `cargo test -p t7-transport` 与 `cargo check -p t7-transport`（确认 `cfg(linux)` 分支被正确剥离、无 warning）。
+4. [x] Linux 分支的真实验证放入 V01（本机无法执行）。
+5. [x] 提交：`git commit -S -m "feat: 实现 Linux sg_io 传输、sysfs 扫描与重枚举观察"`。
 
 **Acceptance:** `test_device_gone_during_reenumeration` 可 grep 且在 macOS 上通过；`cfg(linux)` 代码中除 `ioctl` 调用外无未测逻辑；`cargo clippy -p t7-transport --all-targets -- -D warnings` 在 macOS 全绿。
 
