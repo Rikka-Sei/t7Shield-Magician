@@ -450,13 +450,13 @@ graph TD
 - Consumes：`Transport`、`TransportError`、`cdb_security_in/out`、`CMD_TIMEOUT`。
 
 **Steps（TDD）:**
-1. [ ] 在 `src/runner.rs` 写测试用 `struct FakeTransport { log: RefCell<Vec<(ScsiCdb, Direction)>>, responses: VecDeque<Vec<u8>> }`（记录每次 `execute`，返回预置应答，可注入 `TransportError`）。
-2. [ ] 写 `fn test_session_closed_on_abort()`（失败）：用 FakeTransport 让 StartSession 成功后触发中止 → 断言已发出 EndSession（`FA` 出现在最后一条 OUT 的令牌流）；再让 EndSession 返回 `ScsiCheckCondition` → 断言 `abort` 返回错误但**已产生的操作结果不变**（记录而非覆盖），且没有重发任何命令（`log` 中每条命令恰好一次）。
-3. [ ] 写 `fn test_unsupported_security_protocol()`（失败）：`classify_transport_error(ScsiCheckCondition { sense: 03/11/00 }, step)` → `RunError::Protocol(UnsupportedSecurityProtocol { .. })`；并断言 CDB 构造入口无法产出协议字节 ≠ `0x01` 的 CDB（§4.3 只允许两类 CDB，用枚举/常量层面保证，不靠运行时检查）。
-4. [ ] 写 `fn test_password_write_operations_are_unspecified()`（失败）：`set_password`/`delete_password` 均返回 `PasswordOperationUnspecified`，且 FakeTransport 的 `log` 为空（未下发任何命令）。
-5. [ ] 写判据测试：`evaluate_unlock` 五组输入（仅 PID 变化 → `PidChange`；flags 0x1F→0x3B → `LockingFlags`；真实分区表 + 挂载卷 → `RealPartitionTable`；分区表出现但无卷 → 仍按 ① 返回且 `mounted_volumes` 为空；全无 → `None`）。
-6. [ ] 实现 `unlock.rs`/`runner.rs`；全部测试 + clippy 全绿。
-7. [ ] 提交：`git commit -S -m "feat: 实现解锁判据、会话状态机与编排中止路径"`。
+1. [x] 在 `src/runner.rs` 写测试用 `struct FakeTransport { log: RefCell<Vec<(ScsiCdb, Direction)>>, responses: VecDeque<Vec<u8>> }`（记录每次 `execute`，返回预置应答，可注入 `TransportError`）。
+2. [x] 写 `fn test_session_closed_on_abort()`（失败）：用 FakeTransport 让 StartSession 成功后触发中止 → 断言已发出 EndSession（`FA` 出现在最后一条 OUT 的令牌流）；再让 EndSession 返回 `ScsiCheckCondition` → 断言 `abort` 返回错误但**已产生的操作结果不变**（记录而非覆盖），且没有重发任何命令（`log` 中每条命令恰好一次）。
+3. [x] 写 `fn test_unsupported_security_protocol()`（失败）：`classify_transport_error(ScsiCheckCondition { sense: 03/11/00 }, step)` → `RunError::Protocol(UnsupportedSecurityProtocol { .. })`；并断言 CDB 构造入口无法产出协议字节 ≠ `0x01` 的 CDB（§4.3 只允许两类 CDB，用枚举/常量层面保证，不靠运行时检查）。
+4. [x] 写 `fn test_password_write_operations_are_unspecified()`（失败）：`set_password`/`delete_password` 均返回 `PasswordOperationUnspecified`，且 FakeTransport 的 `log` 为空（未下发任何命令）。
+5. [x] 写判据测试：`evaluate_unlock` 五组输入（仅 PID 变化 → `PidChange`；flags 0x1F→0x3B → `LockingFlags`；真实分区表 + 挂载卷 → `RealPartitionTable`；分区表出现但无卷 → 仍按 ① 返回且 `mounted_volumes` 为空；全无 → `None`）。
+6. [x] 实现 `unlock.rs`/`runner.rs`；全部测试 + clippy 全绿。
+7. [x] 提交：`git commit -S -m "feat: 实现解锁判据、会话状态机与编排中止路径"`。
 
 **Acceptance:** 三条锚点可 grep 且通过；FakeTransport 日志证明单条命令只下发一次（零自动重放）；实现中无重枚举触发命令（`grep -rn "0xE8\|E8 00 00 00 00 00" crates/` 零命中）。
 
