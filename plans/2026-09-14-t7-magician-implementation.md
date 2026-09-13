@@ -385,11 +385,11 @@ graph TD
 - Produces（`reenumeration.rs` 纯判据）：`pub struct ReEnumerationSample { pub pid: Option<u16>, pub partition_table_seen: bool, pub mounted_volumes: Vec<String>, pub device_present: bool }`、`pub fn poll_reenumeration<P: FnMut() -> Result<ReEnumerationSample, TransportError>>(probe: P, window: Duration, interval: Duration) -> Vec<Result<ReEnumerationSample, TransportError>>`（30 s / 500 ms / ≤ 60 次；`DeviceGone` 视为窗口内正常现象继续轮询，其余错误原样返回）。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_command_timeout_maps_to_timeout_error()`（失败）：`map_ioctl_errno(libc::ETIMEDOUT, Duration::from_secs(30))` → `Timeout { elapsed: 30s }`（并断言 `elapsed` 被原样携带，不是丢弃的占位）；`map_ioctl_errno(libc::ENODEV, ..)` → `DeviceGone`；`map_ioctl_errno(libc::ENXIO, ..)` → `DeviceGone`；`map_ioctl_errno(libc::EACCES, ..)` → `PermissionDenied`；`map_ioctl_errno(libc::EPERM, ..)` → `PermissionDenied`；未列举码（如 `libc::EINVAL`）→ `Platform { code: EINVAL }`；并断言 `CMD_TIMEOUT == Duration::from_secs(30)`。
-2. [ ] 写 CDB 黄金向量测试：`cdb_security_in(0x1004, 2048) == [A2 01 10 04 00 00 00 00 08 00 00 00]`、discovery 变体 `cdb_security_in(0x0001, 4096) == [A2 01 00 01 00 00 00 00 10 00 00 00]`、`cdb_security_out(0x1004, 128) == [B5 01 10 04 00 00 00 00 00 80 00 00]`（ComID 以**参数**传入，测试侧用局部变量，禁止常量）。
-3. [ ] 写描述符解析测试（跨平台，用附录 B 的 121 字节真实描述符）：1 个接口、2 个备用设置（`protocol == 0x50` 与 `0x62`）、`class == 8`/`subclass == 6`、端点地址集合 `{0x81, 0x02}` 与 `{0x81, 0x02, 0x83, 0x04}`、`max_packet_size == 1024`；对结构非法的缓冲（空、`bLength` 为 0、步进越界、`wTotalLength` 与实际长度不符）统一 → `Err(TransportError::Platform { code: DESCRIPTOR_MALFORMED })`，其中 `pub const DESCRIPTOR_MALFORMED: i32 = -1;` 定义在 `usb_descriptor.rs`（唯一取值，不再细分；见「待澄清点 C1」）。
-4. [ ] 实现全部模块；`cargo test -p t7-transport`、clippy、fmt 全绿。
-5. [ ] 提交：`git commit -S -m "feat: 建立传输层契约、CDB 构造与跨平台描述符解析"`。
+1. [x] 写 `fn test_command_timeout_maps_to_timeout_error()`（失败）：`map_ioctl_errno(libc::ETIMEDOUT, Duration::from_secs(30))` → `Timeout { elapsed: 30s }`（并断言 `elapsed` 被原样携带，不是丢弃的占位）；`map_ioctl_errno(libc::ENODEV, ..)` → `DeviceGone`；`map_ioctl_errno(libc::ENXIO, ..)` → `DeviceGone`；`map_ioctl_errno(libc::EACCES, ..)` → `PermissionDenied`；`map_ioctl_errno(libc::EPERM, ..)` → `PermissionDenied`；未列举码（如 `libc::EINVAL`）→ `Platform { code: EINVAL }`；并断言 `CMD_TIMEOUT == Duration::from_secs(30)`。
+2. [x] 写 CDB 黄金向量测试：`cdb_security_in(0x1004, 2048) == [A2 01 10 04 00 00 00 00 08 00 00 00]`、discovery 变体 `cdb_security_in(0x0001, 4096) == [A2 01 00 01 00 00 00 00 10 00 00 00]`、`cdb_security_out(0x1004, 128) == [B5 01 10 04 00 00 00 00 00 80 00 00]`（ComID 以**参数**传入，测试侧用局部变量，禁止常量）。
+3. [x] 写描述符解析测试（跨平台，用附录 B 的 121 字节真实描述符）：1 个接口、2 个备用设置（`protocol == 0x50` 与 `0x62`）、`class == 8`/`subclass == 6`、端点地址集合 `{0x81, 0x02}` 与 `{0x81, 0x02, 0x83, 0x04}`、`max_packet_size == 1024`；对结构非法的缓冲（空、`bLength` 为 0、步进越界、`wTotalLength` 与实际长度不符）统一 → `Err(TransportError::Platform { code: DESCRIPTOR_MALFORMED })`，其中 `pub const DESCRIPTOR_MALFORMED: i32 = -1;` 定义在 `usb_descriptor.rs`（唯一取值，不再细分；见「待澄清点 C1」）。
+4. [x] 实现全部模块；`cargo test -p t7-transport`、clippy、fmt 全绿。
+5. [x] 提交：`git commit -S -m "feat: 建立传输层契约、CDB 构造与跨平台描述符解析"`。
 
 **Acceptance:** `pub trait Transport` 在 `crates/t7-transport/src/**/*.rs` 中恰好 1 次；CDB 与 spec §4.3 表逐字节一致；描述符解析在 macOS 与 Linux 上都能跑（无 `cfg` 门控）。
 
