@@ -42,9 +42,9 @@
     "TODO"
   ],
   "requirement_prefix": "REQ-",
-  "min_requirements": 13,
+  "min_requirements": 12,
   "decision_prefix": "D",
-  "latest_decision": 26,
+  "latest_decision": 27,
   "decisions": [
     {
       "decision_id": "D01",
@@ -248,7 +248,7 @@
             "4",
             "5"
           ],
-          "reason": "macOS 降级行为必须同时出现在契约与错误模型"
+          "reason": "通道不可用呈现必须同时出现在契约与错误模型（D27 收敛后由非 Linux 平台的 open 承载）"
         }
       ],
       "forbidden_occurrences": [
@@ -526,44 +526,15 @@
     },
     {
       "decision_id": "D19",
-      "required_terms": [
-        "AlternateSetting"
+      "required_terms": [],
+      "obsolete_terms": [
+        "AlternateSetting",
+        "UsbDescriptorSummary",
+        "max_packet_size"
       ],
-      "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
-      "required_occurrences": [
-        {
-          "pattern": "AlternateSetting",
-          "count": {
-            "min": 2
-          },
-          "sections": [
-            "4"
-          ],
-          "reason": "备用设置数据模型必须在 §4.5 定义"
-        },
-        {
-          "pattern": "max_packet_size",
-          "count": {
-            "min": 1
-          },
-          "sections": [
-            "4"
-          ],
-          "reason": "端点字段集必须逐字段给出"
-        },
-        {
-          "pattern": "0x62",
-          "count": {
-            "min": 1
-          },
-          "sections": [
-            "4"
-          ],
-          "reason": "UAS 备用设置取值必须写明"
-        }
-      ],
+      "required_occurrences": [],
       "forbidden_occurrences": []
     },
     {
@@ -953,6 +924,93 @@
           "reason": "诊断记录字段清单不得包含令牌流（令牌流在 §4 编码契约中的正当用法不受影响）"
         }
       ]
+    },
+    {
+      "decision_id": "D27",
+      "required_terms": [
+        "仅 Linux"
+      ],
+      "obsolete_terms": [
+        "MacOsDiscovery",
+        "MacOsUsb"
+      ],
+      "scoped_terms": [],
+      "whitelist": [
+        "含 kext/dext/VM 中继的一切 macOS 通路",
+        "Windows、macOS 平台通路相关代码路径"
+      ],
+      "required_occurrences": [
+        {
+          "pattern": "仅 Linux",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "1"
+          ],
+          "reason": "运行目标平台收敛为仅 Linux 必须落在范围与目标章节"
+        },
+        {
+          "pattern": "macOS",
+          "count": {
+            "min": 2,
+            "max": 2
+          },
+          "sections": [
+            "1"
+          ],
+          "reason": "§1 仅允许官方客户端版本事实与 §1.3 非目标各一处；§1.3 通路短语经白名单豁免"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "macOS",
+          "count": 1,
+          "sections": [
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "10"
+          ],
+          "reason": "契约章节不得再出现 macOS 作为目标平台的条款性表述（排除性提及仅限 §1.3 非目标）"
+        },
+        {
+          "pattern": "MacOsDiscovery|IOKit|kern_return_t",
+          "count": 1,
+          "sections": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "10"
+          ],
+          "reason": "macOS 通路器械词不得出现在决策日志之外的任何章节"
+        },
+        {
+          "pattern": "kext|dext",
+          "count": 1,
+          "sections": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "10"
+          ],
+          "reason": "macOS 驱动扩展通路不得作为目标表述（§1.3 排除性提及经白名单豁免）"
+        }
+      ]
     }
   ],
   "code_contracts": [
@@ -974,7 +1032,7 @@
       "source_globs": [
         "crates/magi-transport/src/**/*.rs"
       ],
-      "reason": "macOS 降级错误变体必须存在（D08）"
+      "reason": "非 Linux 平台不可用错误变体必须存在（D08/D27）"
     },
     {
       "id": "protocol-comid-runtime",
@@ -1091,13 +1149,6 @@
       "name": "test_session_closed_on_abort",
       "source_globs": [
         "crates/magi-protocol/**/*.rs"
-      ],
-      "required": true
-    },
-    {
-      "name": "test_macos_transport_unavailable",
-      "source_globs": [
-        "crates/magi-transport/**/*.rs"
       ],
       "required": true
     },
