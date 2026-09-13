@@ -3,3 +3,8 @@
 
 # direnv 本地缓存（.envrc 生成的工具链环境）
 .direnv/
+
+# Rust 构建产物
+target/
+# nix 构建产物软链接
+result
