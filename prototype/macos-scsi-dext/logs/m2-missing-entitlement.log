@@ -1,5 +1,0 @@
-Timestamp               Ty Process[PID:TID]
-2026-09-14 04:10:34.249 Df activate[33982:2206f30] submitted activation request for com.t7shield.proto.t7-discovery
-2026-09-14 04:10:34.250 Df activate[33982:2206f32] [com.apple.xpc:connection] [0x1033145a0] activating connection: mach=false listener=false peer=false name=(anonymous)
-2026-09-14 04:10:34.251 Df activate[33982:2206f32] [com.apple.xpc:connection] [0x1033125b0] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
-2026-09-14 04:10:34.252 Df activate[33982:2206f36] EVENT: didFailWithError domain=<private> code=2 userAction=(none)

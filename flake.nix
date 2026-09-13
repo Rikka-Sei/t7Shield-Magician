@@ -7,11 +7,14 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachDefaultSystem
+      (system:
       let
+        # D27：应用产物只面向 Linux 系统（用 system 字符串判定，不在输出结构层强制
+        # 其它平台的 stdenv——nixpkgs 26.11 起 x86_64-darwin 已移除，强制求值会直接抛错）。
+        isLinuxTarget = builtins.elem system [ "x86_64-linux" "aarch64-linux" ];
         pkgs = import nixpkgs { inherit system; };
         inherit (pkgs) lib stdenv;
-
         # Rust 工具链：直接使用 nixpkgs 的稳定打包，避免 rustup 在 Nix 环境下的
         # 动态链接与 ~/.rustup 状态问题。
         rustToolchain = with pkgs; [
@@ -83,7 +86,7 @@
           export GDK_BACKEND=''${GDK_BACKEND:-wayland,x11}
         '';
 
-        # ---- 应用打包：magi（`nix build .#magi` / `nix run .`）----
+        # ---- 应用打包：magi（仅 Linux；`nix build .#magi` / `nix run .`）----
         # 版本取自 workspace.package.version，避免与 Cargo.toml 漂移。
         magi = pkgs.rustPlatform.buildRustPackage {
           pname = "magi";
@@ -112,31 +115,21 @@
 
           # wrapGAppsHook4 未注入 GSETTINGS_SCHEMA_DIR（devShell 同款问题：nixpkgs 的
           # schema 布局是 share/gsettings-schemas/<pname>-<version>/glib-2.0/schemas，
-          # 靠 XDG_DATA_DIRS 搜不到），并入 hook 的包装参数一次生效，两平台统一
+          # 靠 XDG_DATA_DIRS 搜不到），并入 hook 的包装参数一次生效，
           # 免于 GLib-GIO-CRITICAL: g_settings_schema_source_lookup。
           preFixup = ''
             gappsWrapperArgs+=(--prefix GSETTINGS_SCHEMA_DIR : ${lib.concatStringsSep ":" gtkSchemaDirs})
           '';
-
           meta = with lib; {
             description = "MagiShield：Samsung T7 Shield 磁盘解锁客户端（GTK4 + libadwaita）";
             mainProgram = "magi";
             license = licenses.gpl3Only;
-            platforms = platforms.unix;
+            platforms = platforms.linux; # D27：运行目标平台为仅 Linux
           };
         };
 
-      in
-      {
-        packages.magi = magi;
-        packages.default = magi;
-
-        apps.default = {
-          type = "app";
-          program = "${magi}/bin/magi";
-        };
-
-        devShells.default = pkgs.mkShell {
+        # 开发环境不受运行平台限制：Darwin 开发机仍可用 devShell（spec/代码/审计都在此跑）。
+        devShell = pkgs.mkShell {
           name = "t7shield-magician";
 
           nativeBuildInputs = with pkgs; [
@@ -161,5 +154,24 @@
             ${gtkRuntimeHook}
           '';
         };
+
+        # D27：应用产物只面向 Linux（darwin 的 packages/apps 不再导出）。
+        # 用纯 if 分支（isLinuxTarget 只依赖 system 字符串）：输出结构层不触碰
+        # 其它平台的 pkgs/lib——nixpkgs 26.11 起 x86_64-darwin 已移除，任何 import 直接抛错。
+        linuxOutputs = {
+          packages.magi = magi;
+          packages.default = magi;
+
+          apps.default = {
+            type = "app";
+            program = "${magi}/bin/magi";
+          };
+        };
+        darwinOutputs = { };
+      in
+      # if 与 // 都只在属性集结构层工作，不强制任何 pkgs 值。
+      (if isLinuxTarget then linuxOutputs else darwinOutputs)
+      // {
+        devShells.default = devShell;
       });
 }

@@ -31,7 +31,7 @@ cargo build
 | crate | 职责 |
 |---|---|
 | `magi-protocol` | 纯协议层：Level-0 Discovery 解析、TCG 帧构造与响应解析、会话状态机与解锁判据 |
-| `magi-transport` | 传输层：`Transport` trait、12 字节 CDB 通道、平台实现（Linux `sg_io`／macOS 只读描述符侦察） |
+| `magi-transport` | 传输层：`Transport` trait、12 字节 CDB 通道、Linux `sg_io` 实现与跨平台纯逻辑（sense/errno/描述符解析/重枚举采样） |
 | `magi-app` | GTK4 + libadwaita 界面与线程编排（二进制名 `magi`） |
 
 依赖方向单向：`magi-app` → `magi-protocol` → `magi-transport`。
@@ -49,8 +49,8 @@ python3 docs/specs/t7-magician/tools/barriers.py
 
 ## 平台支持
 
-- **Linux**：全功能。
-- **macOS**：可运行，但受系统限制无法直接发送 SCSI 命令，详见 spec。
+- **Linux（x86_64 / aarch64）：全功能**，也是唯一的运行目标平台（spec D27）。
+- Nix 打包产物（`packages` / `apps`）只在 Linux 系统上提供；Darwin 仅保留 `devShells` 作为开发环境。
 - 交付后的 Linux 真机验证清单见 `plans/2026-09-14-t7-magician-implementation.md` 的 V01 节。
 
 ## 协议与安全纪律
