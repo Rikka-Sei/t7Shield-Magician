@@ -589,30 +589,30 @@ graph TD
 - 修改 `README.md`（构建/运行/测试说明与 Linux 验证指引）
 
 **Steps:**
-1. [ ] 全 workspace 验证：
+1. [x] 全 workspace 验证：
    ```bash
    nix develop --command cargo test --workspace
    nix develop --command cargo clippy --workspace --all-targets -- -D warnings
    nix develop --command cargo fmt --all -- --check
    ```
-2. [ ] 18 个锚点逐条 grep 自查（用 spec §10 表的名单，对 `crates/**/*.rs` 逐个 `grep -n "fn <锚点名>("`），确认全部命中且归属 crate 正确。
-3. [ ] 范围与禁用路径的负向自查（AC-007/AC-014/A-002）：
+2. [x] 18 个锚点逐条 grep 自查（用 spec §10 表的名单，对 `crates/**/*.rs` 逐个 `grep -n "fn <锚点名>("`），确认全部命中且归属 crate 正确。
+3. [x] 范围与禁用路径的负向自查（AC-007/AC-014/A-002）：
    - `grep -rn "0xFD\|0xfd" crates/` → 只允许出现在注释/测试的反例断言中，禁止出现在 CDB 构造路径；
    - 重枚举触发命令零命中：`grep -rn "0xE8\|E8 00 00 00 00 00" crates/`；
    - `grep -rni "firmware\|FactoryReset\|secure erase\|windows" crates/` → 不得出现对应实现路径；
    - `grep -rn "0x1004" crates/t7-protocol/src/` → 生产代码零命中（只允许 `#[cfg(test)]` 内作为测试局部变量）。
-4. [ ] 把 `audit_manifest.json` 的 `spec_status` 改为 `authoritative`（先改 manifest，再改正文，符合 `tools/README.md` 的变更顺序）。
-5. [ ] 改 `spec.md`：状态行由 `**状态:** Draft（未接线：…）` 改为 `**状态:** Authoritative`；§10 的「当前状态（Draft）」段替换为切换后的验证结论（不可留 TODO/待确认字样，`forbidden_patterns` 会拦截）。**除这两处外不得改动 spec 正文**（本计划不改任何行为条款）。
-6. [ ] 运行验证三件套（顺序固定）：
+4. [x] 把 `audit_manifest.json` 的 `spec_status` 改为 `authoritative`（先改 manifest，再改正文，符合 `tools/README.md` 的变更顺序）。
+5. [x] 改 `spec.md`：状态行由 `**状态:** Draft（未接线：…）` 改为 `**状态:** Authoritative`；§10 的「当前状态（Draft）」段替换为切换后的验证结论（不可留 TODO/待确认字样，`forbidden_patterns` 会拦截）。**除这两处外不得改动 spec 正文**（本计划不改任何行为条款）。
+6. [x] 运行验证三件套（顺序固定）：
    ```bash
    python3 docs/specs/t7-magician/tools/test_audit_spec.py
    python3 docs/specs/t7-magician/tools/audit_spec.py
    python3 docs/specs/t7-magician/tools/barriers.py
    ```
    期望：三者全部 PASS，`barriers.py` 三条屏障（`cargo test -p t7-protocol` / `-p t7-transport` / `-p t7-app`）全绿、退出码 0、不再出现 `[planned]` 行。
-7. [ ] 若第 6 步失败：**先回退 manifest 的 `spec_status` 为 `draft`**，修代码或补锚点，重复 1–6；禁止在屏障未全绿时切 Authoritative。
-8. [ ] 更新 `README.md`：`cargo build/run/test` 的实际命令、`nix develop` 前置、macOS 平台限制与 `issues/` 指针、Linux 解锁使用说明（含权限提示：不自动提权，需用户对 `/dev/sg*` 有读写权）。
-9. [ ] 提交（spec 与代码**同批**）：
+7. [x] 若第 6 步失败：**先回退 manifest 的 `spec_status` 为 `draft`**，修代码或补锚点，重复 1–6；禁止在屏障未全绿时切 Authoritative。
+8. [x] 更新 `README.md`：`cargo build/run/test` 的实际命令、`nix develop` 前置、macOS 平台限制与 `issues/` 指针、Linux 解锁使用说明（含权限提示：不自动提权，需用户对 `/dev/sg*` 有读写权）。
+9. [x] 提交（spec 与代码**同批**）：
    ```bash
    git add Cargo.toml rustfmt.toml clippy.toml crates docs/specs/t7-magician README.md
    git commit -S -m "feat: 落地 t7-magician 三 crate 实现并将权威规格切换为 authoritative"

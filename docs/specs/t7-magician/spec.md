@@ -1,7 +1,7 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
-**状态:** Draft（未接线：代码契约与测试锚点指向目标 crate `crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`，尚未全部命中，审计降级为 warning）
-**版本:** 0.1（决策基线：D01–D25）
+**状态:** Authoritative（唯一权威）
+**版本:** 0.1（决策基线：D01–D26）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与平台行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -28,7 +28,7 @@
 - GOAL-2 Linux 上完成端到端解锁：Discovery → StartSession → StartTransaction → 4×`Set` → EndTransaction → EndSession，成功判据按 §4 排序裁决。
 - GOAL-3 Linux 上完成口令校验（ValidatePassword），错误口令由设备侧的 TCG 方法状态字节判定，不依赖 SCSI 状态。
 - GOAL-4 以 GTK4 + libadwaita 呈现设备卡片、锁定状态、操作入口与进度/结果反馈；协议操作不阻塞 UI 主线程。
-- GOAL-5 口令全程不落盘、不进日志、不进剪贴板；macOS 无传输通道时给出明确错误而不是沉默或反复重试。
+- GOAL-5 口令全程不落盘、不进诊断记录、不进剪贴板；macOS 无传输通道时给出明确错误而不是沉默或反复重试。
 
 ### 1.3 非目标（Out of Scope）
 
@@ -75,6 +75,7 @@
 | `StatusListForm` | 状态列表形态的选择类型：`Single` = 5 字节单列表，`Two` = 10 字节双列表；选择规则见 §4.7 | 状态列表变体、列表模式 |
 | `UnlockStep` | 进度步骤类型，与 §4.7 的 7 条命令一一对应 | 进度项、步骤枚举 |
 | `TransportError::Platform` | 承载平台原始错误码（如 IOKit `kern_return_t`）的传输层变体；SCSI 语义错误走 `ScsiCheckCondition` | 平台异常、未知传输错误 |
+| 诊断记录 | 内存环形缓冲中的结构化记录（上限 512 条）；只允许 CDB 字节、传输方向、响应长度三类字段，禁止请求载荷、令牌流与口令 | 请求日志、trace、dump |
 
 ## 3. 系统模型与状态机
 
@@ -730,10 +731,10 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 > **验收标准:**
 > - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为三类页面（仪表盘、诊断、关于），导航项数量 ≥ 3，且当前项有选中态（任一时刻选中项唯一）。
 > - Given 位于仪表盘页；When 查看设备区；Then 呈现设备卡（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作区（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
-> - Given 位于诊断页；When 查看内容；Then 呈现内存环形缓冲的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤。
+> - Given 位于诊断页；When 查看内容；Then 呈现诊断记录的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤与字节形态纵深过滤。
 > - Given 位于关于页；When 查看内容；Then 呈现应用版本与 t7Shield-protocol 协议仓库引用。
 > - Given 任一界面定义；When 渲染；Then 使用 GtkBuilder `.ui` 文件与 `#[derive(CompositeTemplate)]` 绑定；`.ui` 文件不含文案字面量（可显示文案只写 i18n 键）。
-> - Given 口令对话框打开；When 输入口令；Then 输入不回显；提交后口令缓冲立即 zeroize；口令不进入日志、剪贴板与任何持久化存储。
+> - Given 口令对话框打开；When 输入口令；Then 输入恒不回显（`GtkPasswordEntry` 的类型固有行为，模板不设置任何可见性属性）、明文切换图标关闭（模板设 `show-peek-icon = false`）；提交后口令缓冲立即 zeroize；口令不进入诊断记录、剪贴板与任何持久化存储。
 
 应用身份契约（显示名与 APP_ID 为暂定值，调整时按 §9 变更流程更新本表与 D24）：
 
@@ -752,7 +753,8 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 | 主区 · 仪表盘 | 锁定状态徽章 | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
 | 主区 · 仪表盘 | 操作区：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
 | 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.8 的判据结论 |
-| 诊断页 | 内存环形缓冲只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
+| 诊断页 | 诊断记录只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
+| 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；模板设 `show-peek-icon = false`；模板不得出现可见性属性设置 |
 | 关于页 | 版本与协议仓库引用 | 两个字段齐备 |
 
 契约：
@@ -793,7 +795,7 @@ pub struct AboutPage {
 #[derive(CompositeTemplate, Default)]
 #[template(file = "ui/password_dialog.ui")]
 pub struct PasswordDialog {
-    #[template_child] pub entry: TemplateChild<gtk::PasswordEntry>, // visibility = false
+    #[template_child] pub entry: TemplateChild<gtk::PasswordEntry>, // 输入恒不回显；模板设 show-peek-icon = false
     #[template_child] pub submit: TemplateChild<gtk::Button>,
 }
 
@@ -913,15 +915,15 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
   - 单飞：每个设备同时最多 1 个在飞操作；新请求在已有操作期间返回 `AppError::Busy`。
   - 降级行为：macOS 上盘操作返回 `TransportError::Unavailable`，不重试、不退避、不轮询。
   - 恢复窗口：设备因重枚举消失后，客户端在 30 s 观察窗口内继续轮询设备节点；窗口结束后用户可手动重新发起。
-  - 取消语义：用户在操作进行中关闭窗口即在当前命令返回后停止后续步骤（不做命令级中断，因为设备不接受带外取消）；已建立会话时尽力发送 EndSession；取消不改变 §5 的错误分类，取消结果记录为「由用户取消」。
+  - 取消语义：用户在操作进行中关闭窗口即在当前命令返回后停止后续步骤（不做命令级中断，因为设备不接受带外取消）；已建立会话时尽力发送 EndSession，但窗口关闭路径的收尾以进程存活为限——GTK 末窗关闭即退出，该路径不保证收尾完成也不可观察；应用内触发的取消须先完成 EndSession 再退出，其收尾可完整观察；取消不改变 §5 的错误分类，取消结果记录为「由用户取消」。
 - **安全**
   - 口令缓冲在报文构造完成后立即 zeroize，并在结构体 `Drop` 时二次清零；zeroize 是实现与测试的硬性要求。
-  - 零日志：口令内容与口令长度都不写入日志；日志只记录结构字段（CDB 字节、令牌流、长度判据），脱敏纪律与 t7Shield-protocol 的 `Log.redact()` 等价。
+  - 零日志：口令内容与口令长度都不进入诊断记录；诊断记录只允许三类字段——CDB 字节、传输方向、响应长度；请求载荷与令牌流一律不记录（StartSession 的令牌流含口令明文）；导出侧再做字节形态纵深过滤（命中疑似口令的十六进制形态即拦截），脱敏纪律与 t7Shield-protocol 的 `Log.redact()` 等价。
   - 零剪贴板、零持久化：口令不写入剪贴板、不写入配置文件、不写入任何缓存或崩溃转储可读的位置。
   - 权限：Linux 上不请求提权；设备节点不可读写时返回 `PermissionDenied` 与提示，不自身提权。
 - **合规与保留**
   - 客户端不落盘任何口令或协议原始帧；诊断信息只保留在内存环形缓冲（上限 512 条）。
-  - 用户可显式导出脱敏诊断文本；导出前必须再次执行口令脱敏过滤。
+  - 用户可显式导出脱敏诊断文本；导出前必须再次执行口令脱敏过滤与字节形态纵深过滤。
 - **容量与背压**
   - 响应缓冲固定 2048 B、Discovery 缓冲固定 4096 B；禁止按响应内容动态扩容。
   - 命令队列上限 1（单飞）；溢出行为为拒绝新请求，不排队。
@@ -948,7 +950,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | 并发触发操作 | 已有在飞操作 | 拒绝新请求 | 呈现「已有操作在执行」 | `test_duplicate_trigger_is_busy` |
 | 设备未被识别 | PID 不属于 `0x61fc`/`0x61fb` | 不发任何命令 | 呈现「未发现 T7 Shield」 | `test_unknown_pid_is_rejected` |
 | 口令写操作被请求 | 用户点击写操作入口 | 返回证据缺口错误 | 呈现不可执行说明与 `issues/` 指针 | `test_password_write_operations_are_unspecified` |
-| 应用退出时会话仍打开 | 用户关闭窗口 | 尽力 EndSession；失败只记录 | 日志记录清理结果，不阻塞退出 | `test_session_closed_on_abort` |
+| 应用退出时会话仍打开 | 用户关闭窗口 | 在进程存活窗口内尽力 EndSession，不做命令级等待 | 诊断记录写入清理结果，不阻塞退出 | `test_session_closed_on_abort` |
 
 ## 8. 验收标准
 
@@ -961,9 +963,9 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 - AC-007（对 GOAL-2、「解锁成功判据与重枚举」）判据按固定优先级返回；仅 PID 变化时结论不等于分区表出现；客户端不发送重枚举触发命令。
 - AC-008（对 GOAL-3、「口令校验」）校验不发送 StartTransaction，只以 EndSession 收尾。
 - AC-009（对 GOAL-2、「报文与原子编码契约」）报文头三个长度域与总长公式匹配；`Set` 类 InvokingID 为目标对象 UID。
-- AC-010（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备卡、锁定徽章、操作区与反馈区子件存在；诊断页有只读列表与脱敏导出；`.ui` 不含文案字面量；口令输入不回显；提交后口令缓冲被 zeroize。
+- AC-010（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备卡、锁定徽章、操作区与反馈区子件存在；诊断页有只读列表与脱敏导出；`.ui` 不含文案字面量；口令对话框输入恒不回显且模板不含可见性属性设置；提交后口令缓冲被 zeroize。
 - AC-011（对 GOAL-4、「线程模型与错误呈现」）协议操作在工作线程执行；UI 单帧阻塞不超过 100 ms；并发触发得到忙错误。
-- AC-012（对 GOAL-5、NFR 安全）口令不出现在日志、剪贴板与任何持久化文件；诊断导出后再过滤。
+- AC-012（对 GOAL-5、NFR 安全）口令不出现在诊断记录、剪贴板与任何持久化文件；诊断记录仅含 CDB 字节、传输方向与响应长度三类字段；导出前经口令脱敏与字节形态过滤。
 - AC-013（对 GOAL-5、「口令设置 / 修改 / 删除」）三个入口均返回证据缺口错误，且不发送任何命令。
 - AC-014（对 GOAL-1、范围）实现中不存在固件更新、安全擦除、0xFD 私有通道与 Windows 相关代码路径。
 - AC-015（对 GOAL-4、NFR 国际化）默认 `zh-CN` 资源齐备，`en` 资源齐备，代码无内联可显示字符串。
@@ -998,6 +1000,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D23 | 接口承载：§4.7 的五个 payload 函数显式接收 `base_comid: u16`、`&SessionIds` 与 `StatusListForm`；`SessionIds` 只承载 TSN/HSN，不得含 ComID；状态列表形态参数化 | §4.7、§4.10 | 五个函数签名均含 `base_comid` 与 `form`；正文声明 `SessionIds` 不含 ComID |
 | D24 | 命名体系：crate 前缀 `t7-` 改为 `magi-`（`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`），主程序二进制名 `magi`，应用显示名 `MagiShield`，应用 ID `dev.rikki.MagiShield`（显示名与 ID 为暂定值，调整时按变更流程更新）；spec 目录名本轮不改 | §3.1、§4.12、§5、§10 | 旧 crate 前缀与旧标识符零命中（由 manifest 的 D24 禁止规则校验）；manifest 的 globs 与屏障命令指向 `magi-*`；§4.12 出现 `MagiShield` 与 APP_ID |
 | D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（仪表盘 / 诊断 / 关于，当前项有选中态）+ 仪表盘区（设备卡、锁定状态徽章、操作区、进度与结果反馈）+ 诊断页（环形缓冲只读列表、脱敏导出）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.12、§8 | 布局契约表与六条验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
+| D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，模板只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.12、§6、§7、§8 | §4.12 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
 
 ## 10. 验证
 
@@ -1038,4 +1041,4 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，macOS 分支返回通道不可用 | 同上，传输层屏障 PASS |
 | 应用层冒烟 | `crates/magi-app` 存在 | UI 模板装载（侧边栏导航、徽章、诊断页、关于页）、入口启用规则、导出脱敏与口令清除测试通过 | 同上，应用层屏障 PASS |
 
-**当前状态（Draft）**：`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app` 尚未落地全部契约与锚点，`barriers.py` 如实输出未接线或环境缺工具链状态并以非零退出码结束；`code_contracts` 与 `test_anchors` 未命中时审计降级为 warning，不阻断。切换到 Authoritative 的条件是：三个 crate 落地、上表锚点全部可 grep、`barriers.py` 全绿，且与代码同批提交。
+**当前状态（Authoritative）**：切换判据已满足——`crates/magi-protocol`（57 测试）、`crates/magi-transport`（32 测试）、`crates/magi-app`（38 测试）三个 crate 全部落地，上表 21 个测试锚点与全部代码契约在代码中可 grep 命中。2026-09-14 于 nix devShell 内实跑验证三件套：`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。本文件自此为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。

@@ -1,7 +1,7 @@
 {
   "_readme": "t7-magician 权威规格审计清单。本文件是规范与验证的唯一事实源，先于 spec.md 正文编写。术语/决策/契约/锚点/屏障的任何变更都必须先改本文件再改正文。",
   "spec_file": "../spec.md",
-  "spec_status": "draft",
+  "spec_status": "authoritative",
   "repo_root": "../../../..",
   "required_sections": [
     "1. 背景与目标",
@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 25,
+  "latest_decision": 26,
   "decisions": [
     {
       "decision_id": "D01",
@@ -872,6 +872,85 @@
             "4"
           ],
           "reason": "像素级实现细节（字号/间距/颜色值）不得进 spec 规范性条款"
+        }
+      ]
+    },
+    {
+      "decision_id": "D26",
+      "required_terms": [
+        "show-peek-icon"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "show-peek-icon",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "口令对话框契约必须写明明文切换图标的关闭方式"
+        },
+        {
+          "pattern": "GtkPasswordEntry",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "不回显的来源必须是类型固有行为"
+        },
+        {
+          "pattern": "传输方向",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
+          "reason": "诊断记录字段清单必须收敛为三类"
+        },
+        {
+          "pattern": "纵深过滤",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
+          "reason": "导出侧字节形态过滤必须写明"
+        },
+        {
+          "pattern": "以进程存活为限",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
+          "reason": "取消收尾边界必须写明"
+        }
+      ],
+      "forbidden_occurrences": [
+        {
+          "pattern": "visibility\\s*=\\s*false",
+          "count": 1,
+          "sections": [
+            "*"
+          ],
+          "reason": "GTK4 的 GtkPasswordEntry 不存在该属性"
+        },
+        {
+          "pattern": "CDB 字节、令牌流|令牌流、长度判据",
+          "count": 1,
+          "sections": [
+            "6"
+          ],
+          "reason": "诊断记录字段清单不得包含令牌流（令牌流在 §4 编码契约中的正当用法不受影响）"
         }
       ]
     }
