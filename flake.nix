@@ -1,5 +1,5 @@
 {
-  description = "t7Shield Magician —— Samsung T7 Shield 磁盘解锁客户端（Rust + GTK4 + libadwaita）开发环境";
+  description = "t7Shield Magician —— Samsung T7 Shield 磁盘解锁客户端（Rust + GTK4 + libadwaita）开发环境与应用打包（nix run . 启动 magi）";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -82,8 +82,60 @@
 
           export GDK_BACKEND=''${GDK_BACKEND:-wayland,x11}
         '';
+
+        # ---- 应用打包：magi（`nix build .#magi` / `nix run .`）----
+        # 版本取自 workspace.package.version，避免与 Cargo.toml 漂移。
+        magi = pkgs.rustPlatform.buildRustPackage {
+          pname = "magi";
+          version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+
+          # flake 源 = git 已跟踪文件（远程 `nix run github:<owner>/t7Shield-Magician`
+          # 只看已提交内容，改动 flake.nix/README/Cargo.lock 后必须先提交）。
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            # 打包期 hook：收集 gschema/图标/GIO 模块路径并包装 bin/magi
+            # （gappsWrapperArgs）。nixpkgs 已弃用旧名 wrapGAppsHook，GTK4 用 wrapGAppsHook4。
+            wrapGAppsHook4
+          ];
+
+          buildInputs = with pkgs; [
+            gtk4
+            libadwaita
+          ] ++ gtkSchemaDeps ++ gtkRuntimeDeps;
+
+          # GTK 模板实例化类测试需要图形会话，无头构建机必然跳过；
+          # 测试验证走 devShell（cargo test --workspace），不在打包期跑。
+          doCheck = false;
+
+          # wrapGAppsHook4 未注入 GSETTINGS_SCHEMA_DIR（devShell 同款问题：nixpkgs 的
+          # schema 布局是 share/gsettings-schemas/<pname>-<version>/glib-2.0/schemas，
+          # 靠 XDG_DATA_DIRS 搜不到），并入 hook 的包装参数一次生效，两平台统一
+          # 免于 GLib-GIO-CRITICAL: g_settings_schema_source_lookup。
+          preFixup = ''
+            gappsWrapperArgs+=(--prefix GSETTINGS_SCHEMA_DIR : ${lib.concatStringsSep ":" gtkSchemaDirs})
+          '';
+
+          meta = with lib; {
+            description = "MagiShield：Samsung T7 Shield 磁盘解锁客户端（GTK4 + libadwaita）";
+            mainProgram = "magi";
+            license = licenses.gpl3Only;
+            platforms = platforms.unix;
+          };
+        };
+
       in
       {
+        packages.magi = magi;
+        packages.default = magi;
+
+        apps.default = {
+          type = "app";
+          program = "${magi}/bin/magi";
+        };
+
         devShells.default = pkgs.mkShell {
           name = "t7shield-magician";
 

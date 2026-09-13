@@ -11,10 +11,20 @@ nix develop
 # 使用 direnv 时自动加载（.envrc 已配置 use flake）
 direnv allow
 
+# 一键构建并启动 MagiShield GUI（Nix 打包，release 版二进制 magi）
+nix run .
+
 # 构建并运行：产物为 target/debug/magi
 cargo run
 cargo build
 ```
+
+## 远程启动
+
+- **本机**：`nix run .`（等价 `nix run .#magi`）。
+- **远程 Linux 机器（盘插在那台机上）**：Nix 从 git 仓库取 flake 时**只看已提交文件**——先把 flake.nix、README.md、Cargo.lock（及其他改动）提交并推送，再在该机本机的图形会话里运行 `nix run github:<owner>/t7Shield-Magician`，或把仓库放在该机可达路径后 `nix run /path/to/repo`。
+- **无显示器场景**：`GDK_BACKEND=x11` + `ssh -Y` 走 X11 转发（Wayland 远程不在支持范围）。
+- **设备权限**：解锁走 `sg_io`，需要对 `/dev/sg*` 的读写权限（udev 规则或加入相应组），交付后真机验证清单见 `plans/2026-09-14-t7-magician-implementation.md` 的 V01 节。
 
 ## crate 结构
 
