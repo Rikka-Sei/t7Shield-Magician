@@ -176,6 +176,38 @@ pub fn discovery_cdb() -> ScsiCdb {
     cdb_security_in(DISCOVERY_SP_SPECIFIC, DISCOVERY_ALLOC_LEN)
 }
 
+/// 测试夹具（真机 Level-0 响应）。仅 `cfg(test)` 编译。
+#[cfg(test)]
+pub(crate) mod testkit {
+    /// `../t7Shield-protocol/analysis/probe-linux.raw` 的固化 fixture（0xb4 = 180 字节）。
+    ///
+    /// 结构：8 字节缓冲头 + 补零到 `0x30` + 6 个描述符（`0x0001`/`0x0002`/`0x0003`/
+    /// `0x0202`/`0x0203`/`0x0402`）+ `0x0000` 终止项与末尾填充。
+    pub(crate) fn level0_fixture() -> Vec<u8> {
+        fn hex(text: &str) -> Vec<u8> {
+            assert!(text.len().is_multiple_of(2), "十六进制字面量长度必须为偶数");
+            (0..text.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("十六进制字面量"))
+                .collect()
+        }
+
+        let mut fixture = Vec::new();
+        fixture.extend_from_slice(&hex("000000a000000001"));
+        fixture.extend(std::iter::repeat_n(0x00, 0x28));
+        fixture.extend_from_slice(&hex("0001100c110000000000000000000000"));
+        fixture.extend_from_slice(&hex("0002100c1f0000000000000000000000"));
+        fixture.extend_from_slice(&hex(
+            "0003101c01000000000000000000000200000000000000080000000000000000",
+        ));
+        fixture.extend_from_slice(&hex("0202100c0000000900a0000000000001"));
+        fixture.extend_from_slice(&hex("0203101010040001000004000900000000000000"));
+        fixture.extend_from_slice(&hex("0402100c010000000000000000000000"));
+        fixture.extend(std::iter::repeat_n(0x00, 16));
+        fixture
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,18 +236,7 @@ mod tests {
     /// `0x0000` 终止项处停止。同测例附带 §4.2 的三条边界断言。
     #[test]
     fn test_level0_parses_base_comid() {
-        let mut fixture = Vec::new();
-        fixture.extend_from_slice(&hex("000000a000000001")); // 8 字节缓冲头
-        fixture.extend(std::iter::repeat_n(0x00, 0x28)); // 补齐到 0x30
-        fixture.extend_from_slice(&hex("0001100c110000000000000000000000"));
-        fixture.extend_from_slice(&hex("0002100c1f0000000000000000000000"));
-        fixture.extend_from_slice(&hex(
-            "0003101c01000000000000000000000200000000000000080000000000000000",
-        ));
-        fixture.extend_from_slice(&hex("0202100c0000000900a0000000000001"));
-        fixture.extend_from_slice(&hex("0203101010040001000004000900000000000000"));
-        fixture.extend_from_slice(&hex("0402100c010000000000000000000000"));
-        fixture.extend(std::iter::repeat_n(0x00, 16)); // 末尾填充（含 0xa4 的 0x0000 终止项）
+        let fixture = super::testkit::level0_fixture();
         assert_eq!(fixture.len(), 0xb4);
 
         let discovery = parse_level0(&fixture).expect("真机 fixture 必须解析成功");
