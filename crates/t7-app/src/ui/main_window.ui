@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  §4.12 主窗口模板（K5）：本文件只承载结构与 id/class，不含任何用户可见字面量；
+  全部文案在 MainWindow::setup() 里经 i18n 键赋值（locales/*.yml）。
+-->
+<interface>
+  <requires lib="gtk" version="4.10"/>
+  <requires lib="Adw" version="1.6"/>
+  <template class="T7MainWindow" parent="AdwApplicationWindow">
+    <property name="default-width">720</property>
+    <property name="default-height">560</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="title-widget">
+              <object class="AdwWindowTitle" id="window_title"/>
+            </property>
+            <child type="end">
+              <object class="GtkButton" id="action_export_diagnostics"/>
+            </child>
+          </object>
+        </child>
+        <property name="content">
+          <object class="AdwClamp">
+            <property name="maximum-size">680</property>
+            <property name="tightening-threshold">520</property>
+            <property name="child">
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">18</property>
+                <property name="margin-top">18</property>
+                <property name="margin-bottom">18</property>
+                <property name="margin-start">18</property>
+                <property name="margin-end">18</property>
+                <child>
+                  <object class="AdwBin" id="device_card">
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkLabel" id="device_group_title">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                            <style>
+                              <class name="heading"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="device_model_label">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                            <property name="selectable">true</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="device_ids_label">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                            <property name="selectable">true</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="device_node_label">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                            <property name="selectable">true</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="device_channel_label">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="device_descriptor_label">
+                            <property name="xalign">0</property>
+                            <property name="halign">start</property>
+                            <property name="wrap">true</property>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="status_label">
+                    <property name="xalign">0</property>
+                    <property name="halign">start</property>
+                    <style>
+                      <class name="title-3"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkButton" id="action_unlock"/>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="action_validate_password"/>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkButton" id="action_set_password"/>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="action_change_password"/>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="action_delete_password"/>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkButton" id="action_cancel"/>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkProgressBar" id="progress"/>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="result_label">
+                    <property name="xalign">0</property>
+                    <property name="halign">start</property>
+                    <property name="wrap">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="platform_notice_label">
+                    <property name="xalign">0</property>
+                    <property name="halign">start</property>
+                    <property name="wrap">true</property>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

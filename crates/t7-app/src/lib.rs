@@ -34,6 +34,9 @@ pub mod password_dialog;
 /// `AppError` → 呈现码映射与文案键（§4.13 表）。
 pub mod presentation;
 
+#[cfg(test)]
+mod test_support;
+
 use gtk::gio::prelude::ApplicationExtManual;
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -45,6 +48,7 @@ pub const APP_ID: &str = "dev.rikki.T7Magician";
 pub fn run() -> gtk::glib::ExitCode {
     init_locale();
     let app = adw::Application::builder().application_id(APP_ID).build();
+    main_window::MainWindow::install(&app);
     app.run()
 }
 
