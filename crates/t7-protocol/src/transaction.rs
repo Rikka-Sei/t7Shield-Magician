@@ -242,7 +242,9 @@ mod tests {
                 value: 0,
             })
         );
-        let mbr = set_cell_payload(
+        // Set 类命令的 InvokingID 是目标表 UID（不是 SMUID）：上面第 1 条逐字节向量里
+        // `tokens[1..10]` 即 A8[MBRCONTROL]，Session Manager 的 UID 不出现。
+        let mbr_pkt = set_cell_payload(
             comid,
             &ids,
             StatusListForm::Single,
@@ -252,8 +254,9 @@ mod tests {
                 value: 1,
             },
         );
-        let smuid_atom = crate::atom::uid_atom(&crate::uid::SMUID);
-        assert!(!tokens_of(&mbr, 36).windows(9).any(|w| w == &smuid_atom[..]));
+        let mbr = tokens_of(&mbr_pkt, 36);
+        assert_eq!(mbr[1..10], crate::atom::uid_atom(&MBRCONTROL)[..]);
+        assert_ne!(mbr[1..10], crate::atom::uid_atom(&crate::uid::SMUID)[..]);
     }
 
     /// `FB`/`FC`/`FA` 三条收尾命令：令牌流与 64 B 载荷总长。

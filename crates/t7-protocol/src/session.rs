@@ -135,14 +135,11 @@ mod tests {
             crate::frame::testkit::start_session_packet_golden(),
             "16 字节口令必须与附录 A1 的 128 字节黄金向量逐字节一致"
         );
-        // 16 字节口令走中字节串 D0 10（不是短字节串 A0 10）。
+        // §4.6 模板的固定前缀长度：F8 A8[SMUID] A8[STARTSESSION] F0 01 A8[LOCKINGSP] 01
+        // 之后是 `F2 00` + 口令原子；16 字节口令必须走中字节串 D0 10（不是短字节串 A0 10）。
         assert_eq!(pkt[0x38..0x38 + 2], [0xF8, 0xA8]);
         let tokens = &pkt[PAYLOAD_HEADER..];
-        let atom_pos = tokens
-            .windows(2)
-            .position(|w| w == [TOK_STARTNAME, 0x00].as_slice())
-            .expect("HostChallenge 块必须存在");
-        assert_eq!(tokens[atom_pos + 2..atom_pos + 4], [0xD0, 0x10]);
+        assert_eq!(tokens[31..35], [TOK_STARTNAME, 0x00, 0xD0, 0x10]);
 
         // 3 字节口令：短字节串 A3 + 明文（§4.10 编码表）。
         let short = start_session_payload(&locking_sp_request(comid, b"ABC"));
@@ -170,12 +167,10 @@ mod tests {
             &empty_tokens[..]
         );
         assert_eq!(empty.len(), 96);
-        assert!(!empty
-            .windows(2)
-            .any(|w| w == [TOK_STARTNAME, 0x00].as_slice()));
-        assert!(!empty
-            .windows(2)
-            .any(|w| w == [TOK_ENDNAME, TOK_STARTNAME].as_slice()));
+        assert!(
+            !empty.contains(&TOK_STARTNAME) && !empty.contains(&TOK_ENDNAME),
+            "空口令不构造 HostChallenge 块（D02）"
+        );
     }
 
     /// 口令校验报文与 StartSession 同构（§4.9）。
