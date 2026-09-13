@@ -183,16 +183,30 @@ pub fn scan_devices() -> Result<Vec<ScanHit>, AppError> {
 #[cfg(target_os = "macos")]
 fn platform_scan() -> Result<Vec<ScanHit>, AppError> {
     let mut hits = Vec::new();
-    // 锁定态与解锁态是两个不同的 PID，分别侦察（§4.1）。
+    let mut first_error = None;
+    let mut succeeded = 0usize;
+    // 锁定态与解锁态是两个不同的 PID，分别侦察（§4.1）：某一 PID 下没有设备不是错误，
+    // 因此逐个 PID 容忍失败；只有两个 PID 都失败时才把首个错误上报。
     for pid in [magi_protocol::PID_LOCKED, magi_protocol::PID_UNLOCKED] {
-        let summaries = magi_transport::macos::MacOsDiscovery::enumerate(VENDOR_ID, pid)?;
-        for summary in summaries {
-            if let Some(hit) = hit_from_usb(summary.vid, summary.pid, None, Some(&summary)) {
-                hits.push(hit);
+        match magi_transport::macos::MacOsDiscovery::enumerate(VENDOR_ID, pid) {
+            Ok(summaries) => {
+                succeeded += 1;
+                for summary in summaries {
+                    if let Some(hit) = hit_from_usb(summary.vid, summary.pid, None, Some(&summary))
+                    {
+                        hits.push(hit);
+                    }
+                }
+            }
+            Err(err) => {
+                first_error.get_or_insert(err);
             }
         }
     }
-    Ok(hits)
+    match first_error {
+        Some(err) if succeeded == 0 => Err(err.into()),
+        _ => Ok(hits),
+    }
 }
 
 /// Linux：sysfs 设备扫描（只按厂商过滤，PID 判态交给 `identify_device`）。

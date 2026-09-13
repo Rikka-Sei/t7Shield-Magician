@@ -1,0 +1,123 @@
+/* MagiShield 界面样式（布局对标 Samsung Magician：深色底 + 蓝色强调 + 卡片与徽章）。
+   颜色与间距集中在此处；本文件不含任何文案（文案一律走 i18n 键）。 */
+
+window {
+  background-color: #14161b;
+  color: #e7eaf2;
+}
+
+/* 左侧深色侧边栏 */
+.sidebar {
+  background-color: #0d0f13;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px 12px;
+}
+
+.brand {
+  color: #9fb0d0;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.nav-group {
+  background-color: #15181e;
+  border-radius: 12px;
+  padding: 6px;
+}
+
+.nav-item {
+  border-radius: 10px;
+  padding: 9px 10px;
+  color: #c3cbdc;
+}
+
+.nav-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.nav-item.active {
+  background-color: rgba(56, 132, 255, 0.20);
+  color: #6ea8fe;
+  font-weight: 600;
+}
+
+/* 卡片式容器 */
+.card {
+  background-color: #1b1f27;
+  border-radius: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.card-title {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.dim {
+  color: #8d97ab;
+  font-size: 0.86em;
+}
+
+/* 状态徽章：锁定态用醒目暖色、解锁态用绿色、未知态中性 */
+.badge {
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-weight: 700;
+  font-size: 0.86em;
+}
+
+.badge-locked {
+  background-color: rgba(255, 176, 32, 0.18);
+  color: #ffb020;
+}
+
+.badge-unlocked {
+  background-color: rgba(74, 222, 128, 0.16);
+  color: #4ade80;
+}
+
+.badge-neutral {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #aab3c5;
+}
+
+.primary-action {
+  background-color: #3884ff;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.page-title {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+
+.progress-bar trough {
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  min-height: 6px;
+}
+
+.progress-bar progress {
+  background-color: #3884ff;
+  border-radius: 999px;
+  min-height: 6px;
+}
+
+.result {
+  color: #dbe1ee;
+}
+
+.notice {
+  color: #98a2b6;
+  font-size: 0.86em;
+}
+
+.diagnostics-view {
+  font-family: monospace;
+  font-size: 0.86em;
+  background-color: #10131a;
+  color: #cbd3e2;
+}

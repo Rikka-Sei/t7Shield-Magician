@@ -1,5 +1,16 @@
 # magi-app 默认语言资源（zh-CN）。键集合必须与 en.yml 完全一致（有测试断言）。
 # 约定：所有用户可见文案只在此处与 en.yml 出现，代码与 .ui 内不内联可显示字符串（AC-015）。
+nav:
+  dashboard: "仪表盘"
+  diagnostics: "诊断"
+  about: "关于"
+dashboard:
+  title: "概览"
+about:
+  version: "版本 %{version}"
+  repository: "协议参考：t7Shield-protocol 仓库（A 路字节级契约）"
+  notice: "本工具只实现 A 路解锁与口令校验：不提供固件更新、安全擦除、性能基准与私有通道。"
+
 app:
   title: "MagiShield"
   subtitle: "Samsung Portable SSD T7 Shield（04e8:61fc / 04e8:61fb）"
@@ -67,6 +78,9 @@ issue:
   macos_transport: "issues/2026-09-14-macOS传输通道.md"
   password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
+  view_title: "诊断记录"
+  hint: "内存环形缓冲（上限 512 条），导出前再次执行口令脱敏过滤。"
+  empty: "暂无记录"
   title: "诊断导出"
   redacted_note: "导出内容已脱敏：口令内容、长度与十六进制形态均已过滤"
   entry_count: "缓冲条数"

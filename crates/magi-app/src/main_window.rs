@@ -55,6 +55,40 @@ mod imp {
         #[template_child]
         pub window_title: TemplateChild<adw::WindowTitle>,
         #[template_child]
+        pub brand_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub nav_dashboard: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub nav_diagnostics: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub nav_about: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub nav_dashboard_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub nav_diagnostics_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub nav_about_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub content_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub dashboard_title_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub diagnostics_title_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub diagnostics_hint_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub diagnostics_view: TemplateChild<gtk::TextView>,
+        #[template_child]
+        pub about_title_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub about_version_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub about_repository_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub about_notice_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub sidebar_notice_label: TemplateChild<gtk::Label>,
+        #[template_child]
         pub device_group_title: TemplateChild<gtk::Label>,
         #[template_child]
         pub device_model_label: TemplateChild<gtk::Label>,
@@ -85,7 +119,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for MainWindow {
-        const NAME: &'static str = "T7MainWindow";
+        const NAME: &'static str = "MagiMainWindow";
         type Type = super::MainWindow;
         type ParentType = adw::ApplicationWindow;
 
@@ -161,8 +195,26 @@ impl MainWindow {
     /// 文案与初始状态：`.ui` 内无字面量，全部显示文本在此经 i18n 键赋值。
     fn setup(&self) {
         let imp = self.imp();
+        load_css();
         imp.window_title.set_title(&t!("app.title"));
         imp.window_title.set_subtitle(&t!("app.subtitle"));
+        imp.brand_label.set_label(&t!("app.title"));
+        imp.nav_dashboard_label.set_label(&t!("nav.dashboard"));
+        imp.nav_diagnostics_label.set_label(&t!("nav.diagnostics"));
+        imp.nav_about_label.set_label(&t!("nav.about"));
+        imp.content_stack.set_visible_child_name("dashboard");
+        imp.dashboard_title_label.set_label(&t!("dashboard.title"));
+        imp.diagnostics_title_label
+            .set_label(&t!("diagnostics.view_title"));
+        imp.diagnostics_hint_label
+            .set_label(&t!("diagnostics.hint"));
+        imp.about_title_label.set_label(&t!("nav.about"));
+        imp.about_version_label
+            .set_label(&t!("about.version", version = env!("CARGO_PKG_VERSION")));
+        imp.about_repository_label
+            .set_label(&t!("about.repository"));
+        imp.about_notice_label.set_label(&t!("about.notice"));
+        imp.sidebar_notice_label.set_label(&t!("app.subtitle"));
         imp.device_group_title.set_label(&t!("device.group_title"));
         imp.device_model_label.set_label(&t!("device.model"));
         for action in ActionId::ALL {
@@ -209,6 +261,18 @@ impl MainWindow {
             this,
             move |_| this.export_diagnostics()
         ));
+        for (button, page) in [
+            (imp.nav_dashboard.get(), "dashboard"),
+            (imp.nav_diagnostics.get(), "diagnostics"),
+            (imp.nav_about.get(), "about"),
+        ] {
+            let this = self.clone();
+            button.connect_clicked(glib::clone!(
+                #[weak]
+                this,
+                move |_| this.show_page(page)
+            ));
+        }
     }
 
     /// 扫描设备并更新设备卡片（§4.1/§4.5：Linux sysfs / macOS 只读描述符侦察）。
@@ -293,6 +357,7 @@ impl MainWindow {
         let imp = self.imp();
         imp.status_label
             .set_label(&t!(hit.job.identity.status_key()));
+        self.set_badge_class(hit.job.identity);
         imp.device_model_label.set_label(&t!("device.model"));
         imp.device_ids_label.set_label(&format!(
             "{} {:04x}:{:04x}",
@@ -318,11 +383,26 @@ impl MainWindow {
         let imp = self.imp();
         imp.status_label
             .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
+        self.set_badge_class(DeviceIdentity::Unrecognized);
         imp.device_model_label.set_label(&t!("device.model"));
         imp.device_ids_label.set_label("");
         imp.device_node_label.set_label("");
         imp.device_channel_label.set_label("");
         imp.device_descriptor_label.set_label("");
+    }
+
+    /// 状态徽章配色（锁定态醒目暖色、解锁态绿色、其余中性）。
+    fn set_badge_class(&self, identity: DeviceIdentity) {
+        let label = self.imp().status_label.get();
+        for class in ["badge-locked", "badge-unlocked", "badge-neutral"] {
+            label.remove_css_class(class);
+        }
+        let class = match identity {
+            DeviceIdentity::Locked => "badge-locked",
+            DeviceIdentity::Unlocked => "badge-unlocked",
+            _ => "badge-neutral",
+        };
+        label.add_css_class(class);
     }
 
     /// 平台限制文案（§4.5：macOS 呈现已证实限制与 `issues/` 指针）。
@@ -369,6 +449,33 @@ impl MainWindow {
     /// 窗口运行期状态（设备、闸门、取消标志与在飞动作）。
     fn state(&self) -> &RefCell<WindowState> {
         &self.imp().state
+    }
+
+    /// 切换页面并高亮当前导航项（对标原版侧边栏的选中态）。
+    fn show_page(&self, page: &'static str) {
+        let imp = self.imp();
+        imp.content_stack.set_visible_child_name(page);
+        for (button, name) in [
+            (imp.nav_dashboard.get(), "dashboard"),
+            (imp.nav_diagnostics.get(), "diagnostics"),
+            (imp.nav_about.get(), "about"),
+        ] {
+            if name == page {
+                button.add_css_class("active");
+            } else {
+                button.remove_css_class("active");
+            }
+        }
+        if page == "diagnostics" {
+            self.refresh_diagnostics_view();
+        }
+    }
+
+    /// 诊断页内容：环形缓冲的脱敏导出文本（只读、不可编辑）。
+    fn refresh_diagnostics_view(&self) {
+        let text = diagnostics::ring().export_redacted();
+        let buffer = self.imp().diagnostics_view.buffer();
+        buffer.set_text(&text);
     }
 
     /// 入口按钮（按 `ActionId` 取模板子件）。
@@ -553,6 +660,19 @@ impl MainWindow {
                     }
                 }
             ),
+        );
+    }
+}
+
+/// 加载界面样式（颜色与间距集中在 `ui/style.css`；文件内无文案）。
+fn load_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(include_str!("ui/style.css"));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
 }

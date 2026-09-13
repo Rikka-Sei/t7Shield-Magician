@@ -1,6 +1,17 @@
 # magi-app English resource. The key set must stay identical to zh-CN.yml (asserted by a test).
 # Convention: user-visible text lives only here and in zh-CN.yml; code and .ui files carry no
 # inline displayable strings (AC-015).
+nav:
+  dashboard: "Dashboard"
+  diagnostics: "Diagnostics"
+  about: "About"
+dashboard:
+  title: "Overview"
+about:
+  version: "Version %{version}"
+  repository: "Protocol reference: the t7Shield-protocol repository (byte-level A-path contract)"
+  notice: "This tool only implements A-path unlock and password validation: no firmware update, no secure erase, no benchmarks, no vendor-private channel."
+
 app:
   title: "MagiShield"
   subtitle: "Samsung Portable SSD T7 Shield (04e8:61fc / 04e8:61fb)"
@@ -68,6 +79,9 @@ issue:
   macos_transport: "issues/2026-09-14-macOS传输通道.md"
   password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
+  view_title: "Diagnostic records"
+  hint: "In-memory ring buffer (512 entries max); the password redaction filter runs again on export."
+  empty: "No records yet"
   title: "Diagnostics export"
   redacted_note: "The export is redacted: password content, length, and hex forms are all filtered out"
   entry_count: "Buffered entries"
