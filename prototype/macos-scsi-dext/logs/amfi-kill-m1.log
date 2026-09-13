@@ -1,0 +1,6 @@
+Timestamp               Ty Process[PID:TID]
+2026-09-14 04:08:43.937 Df kernel[0:2206084] (AppleMobileFileIntegrity) AMFI: '/Users/rikki/WorkSpace/Dev/t7Shield-Magician/prototype/macos-scsi-dext/build/T7ProtoHost.app/Contents/MacOS/activate' is adhoc signed.
+2026-09-14 04:08:43.972 Df kernel[0:2206084] (AppleMobileFileIntegrity) AMFI: When validating /Users/rikki/WorkSpace/Dev/t7Shield-Magician/prototype/macos-scsi-dext/build/T7ProtoHost.app/Contents/MacOS/activate:
+  Code has restricted entitlements, but the validation of its code signature failed.
+Unsatisfied Entitlements:
+2026-09-14 04:10:34.226 Df kernel[0:2206f2f] (AppleMobileFileIntegrity) AMFI: '/Users/rikki/WorkSpace/Dev/t7Shield-Magician/prototype/macos-scsi-dext/build/T7ProtoHost.app/Contents/MacOS/activate' is adhoc signed.

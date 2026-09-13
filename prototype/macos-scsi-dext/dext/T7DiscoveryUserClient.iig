@@ -1,0 +1,21 @@
+#ifndef T7DiscoveryUserClient_h
+#define T7DiscoveryUserClient_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+#include <DriverKit/IOUserClient.iig>
+
+/*
+ * 自定义 user client：selector 0 = 发只读 Level-0 Discovery CDB，
+ * 响应经 structureOutput（descriptor 或 OSData）回宿主进程。
+ */
+class T7DiscoveryUserClient : public IOUserClient
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+
+    kern_return_t SendDiscovery(IOUserClientMethodArguments * arguments) LOCALONLY;
+};
+
+#endif /* T7DiscoveryUserClient_h */

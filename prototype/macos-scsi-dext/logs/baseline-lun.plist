@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>CurrentPowerState</key>
+		<integer>1</integer>
+		<key>INQUIRY Device Identification</key>
+		<array>
+			<dict>
+				<key>Association</key>
+				<integer>0</integer>
+				<key>Code Set</key>
+				<integer>1</integer>
+				<key>Identifier</key>
+				<data>
+				UAAAAAAAAAE=
+				</data>
+				<key>Identifier Type</key>
+				<integer>3</integer>
+			</dict>
+		</array>
+		<key>IOMatchCategory</key>
+		<string>SCSITaskUserClientIniter</string>
+		<key>IOObjectClass</key>
+		<string>IOSCSIHierarchicalLogicalUnit</string>
+		<key>IOObjectRetainCount</key>
+		<integer>10</integer>
+		<key>IOPowerManagement</key>
+		<dict>
+			<key>CapabilityFlags</key>
+			<integer>49152</integer>
+			<key>ChildProxyPowerState</key>
+			<integer>1</integer>
+			<key>ChildrenPowerState</key>
+			<integer>1</integer>
+			<key>CurrentPowerState</key>
+			<integer>1</integer>
+			<key>DevicePowerState</key>
+			<integer>1</integer>
+			<key>DriverPowerState</key>
+			<integer>1</integer>
+			<key>MaxPowerState</key>
+			<integer>1</integer>
+		</dict>
+		<key>IORegistryEntryChildren</key>
+		<array>
+			<dict>
+				<key>IOObjectClass</key>
+				<string>com_samsung_driver_Magician</string>
+				<key>IOObjectRetainCount</key>
+				<integer>9</integer>
+				<key>IORegistryEntryChildren</key>
+				<array>
+					<dict>
+						<key>IOObjectClass</key>
+						<string>IOBlockStorageServices</string>
+						<key>IOObjectRetainCount</key>
+						<integer>6</integer>
+						<key>IORegistryEntryChildren</key>
+						<array>
+							<dict>
+								<key>IOObjectClass</key>
+								<string>IOBlockStorageDriver</string>
+								<key>IOObjectRetainCount</key>
+								<integer>8</integer>
+								<key>IORegistryEntryChildren</key>
+								<array>
+									<dict>
+										<key>IOObjectClass</key>
+										<string>IOMedia</string>
+										<key>IOObjectRetainCount</key>
+										<integer>12</integer>
+										<key>IORegistryEntryChildren</key>
+										<array>
+											<dict>
+												<key>IOObjectClass</key>
+												<string>IOMediaBSDClient</string>
+												<key>IOObjectRetainCount</key>
+												<integer>6</integer>
+												<key>IORegistryEntryID</key>
+												<integer>4296010725</integer>
+												<key>IORegistryEntryName</key>
+												<string>IOMediaBSDClient</string>
+												<key>IOServiceBusyState</key>
+												<integer>0</integer>
+												<key>IOServiceBusyTime</key>
+												<integer>2833375</integer>
+												<key>IOServiceState</key>
+												<integer>30</integer>
+											</dict>
+											<dict>
+												<key>IOObjectClass</key>
+												<string>IOFDiskPartitionScheme</string>
+												<key>IOObjectRetainCount</key>
+												<integer>6</integer>
+												<key>IORegistryEntryChildren</key>
+												<array>
+													<dict>
+														<key>IOObjectClass</key>
+														<string>IOMedia</string>
+														<key>IOObjectRetainCount</key>
+														<integer>11</integer>
+														<key>IORegistryEntryChildren</key>
+														<array>
+															<dict>
+																<key>IOObjectClass</key>
+																<string>IOMediaBSDClient</string>
+																<key>IOObjectRetainCount</key>
+																<integer>7</integer>
+																<key>IORegistryEntryID</key>
+																<integer>4296010732</integer>
+																<key>IORegistryEntryName</key>
+																<string>IOMediaBSDClient</string>
+																<key>IOServiceBusyState</key>
+																<integer>0</integer>
+																<key>IOServiceBusyTime</key>
+																<integer>1530708</integer>
+																<key>IOServiceState</key>
+																<integer>30</integer>
+															</dict>
+														</array>
+														<key>IORegistryEntryID</key>
+														<integer>4296010731</integer>
+														<key>IORegistryEntryLocation</key>
+														<string>1</string>
+														<key>IORegistryEntryName</key>
+														<string>Untitled 1</string>
+														<key>IOServiceBusyState</key>
+														<integer>0</integer>
+														<key>IOServiceBusyTime</key>
+														<integer>4914583</integer>
+														<key>IOServiceState</key>
+														<integer>30</integer>
+													</dict>
+												</array>
+												<key>IORegistryEntryID</key>
+												<integer>4296010728</integer>
+												<key>IORegistryEntryName</key>
+												<string>IOFDiskPartitionScheme</string>
+												<key>IOServiceBusyState</key>
+												<integer>0</integer>
+												<key>IOServiceBusyTime</key>
+												<integer>4470541</integer>
+												<key>IOServiceState</key>
+												<integer>0</integer>
+											</dict>
+										</array>
+										<key>IORegistryEntryID</key>
+										<integer>4296010724</integer>
+										<key>IORegistryEntryName</key>
+										<string>Samsung PSSD T7 Shield Media</string>
+										<key>IOServiceBusyState</key>
+										<integer>0</integer>
+										<key>IOServiceBusyTime</key>
+										<integer>15965916</integer>
+										<key>IOServiceState</key>
+										<integer>30</integer>
+									</dict>
+								</array>
+								<key>IORegistryEntryID</key>
+								<integer>4296010722</integer>
+								<key>IORegistryEntryName</key>
+								<string>IOBlockStorageDriver</string>
+								<key>IOServiceBusyState</key>
+								<integer>0</integer>
+								<key>IOServiceBusyTime</key>
+								<integer>17481375</integer>
+								<key>IOServiceState</key>
+								<integer>30</integer>
+							</dict>
+						</array>
+						<key>IORegistryEntryID</key>
+						<integer>4296010721</integer>
+						<key>IORegistryEntryName</key>
+						<string>IOBlockStorageServices</string>
+						<key>IOServiceBusyState</key>
+						<integer>0</integer>
+						<key>IOServiceBusyTime</key>
+						<integer>20912166</integer>
+						<key>IOServiceState</key>
+						<integer>30</integer>
+					</dict>
+				</array>
+				<key>IORegistryEntryID</key>
+				<integer>4296010718</integer>
+				<key>IORegistryEntryName</key>
+				<string>com_samsung_driver_Magician</string>
+				<key>IOServiceBusyState</key>
+				<integer>0</integer>
+				<key>IOServiceBusyTime</key>
+				<integer>30352791</integer>
+				<key>IOServiceState</key>
+				<integer>30</integer>
+			</dict>
+		</array>
+		<key>IORegistryEntryID</key>
+		<integer>4296010710</integer>
+		<key>IORegistryEntryLocation</key>
+		<string>0000000000000000</string>
+		<key>IORegistryEntryName</key>
+		<string>IOSCSIHierarchicalLogicalUnit</string>
+		<key>IOServiceBusyState</key>
+		<integer>0</integer>
+		<key>IOServiceBusyTime</key>
+		<integer>49122166</integer>
+		<key>IOServiceBusyTimeoutExtensions</key>
+		<integer>2</integer>
+		<key>IOServiceState</key>
+		<integer>30</integer>
+		<key>IOUnitLUN</key>
+		<integer>0</integer>
+		<key>IOUnitLUNBytes</key>
+		<data>
+		AAAAAAAAAAA=
+		</data>
+		<key>Peripheral Device Type</key>
+		<integer>0</integer>
+		<key>Product Identification</key>
+		<string>PSSD T7 Shield</string>
+		<key>Product Revision Level</key>
+		<string>0</string>
+		<key>Protocol Characteristics</key>
+		<dict>
+			<key>Physical Interconnect</key>
+			<string>USB</string>
+			<key>Physical Interconnect Location</key>
+			<string>External</string>
+			<key>Read Time Out Duration</key>
+			<integer>30000</integer>
+			<key>Retry Count</key>
+			<integer>20</integer>
+			<key>SCSI Logical Unit Bytes</key>
+			<data>
+			AAAAAAAAAAA=
+			</data>
+			<key>SCSI Logical Unit Number</key>
+			<integer>0</integer>
+			<key>Write Time Out Duration</key>
+			<integer>30000</integer>
+		</dict>
+		<key>SCSI Logical Unit Bytes</key>
+		<data>
+		AAAAAAAAAAA=
+		</data>
+		<key>SCSI Logical Unit Number</key>
+		<integer>0</integer>
+		<key>TPGS Information</key>
+		<integer>0</integer>
+		<key>Vendor Identification</key>
+		<string>Samsung</string>
+	</dict>
+</array>
+</plist>

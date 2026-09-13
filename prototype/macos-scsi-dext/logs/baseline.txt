@@ -1,0 +1,30 @@
+03:58:16
+2 extension(s)
+--- com.apple.system_extension.network_extension (Go to 'System Settings > General > Login Items & Extensions > Network Extensions' to modify these system extension(s))
+enabled	active	teamID	bundleID (version)	name	[state]
+*	*	J6S6Q257EK	ch.protonvpn.mac.WireGuard-Extension (6.5.1/3106797.2605011144)	Proton VPN WireGuard	[activated enabled]
+*	*	J6S6Q257EK	ch.protonvpn.mac.Transparent-Proxy (6.5.1/3106797.2605011144)	Proton VPN Split Tunneling (experimental)	[activated enabled]
+Traceback (most recent call last):
+  File "<string>", line 3, in <module>
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/plistlib.py", line 883, in loads
+    return load(fp, fmt=fmt, dict_type=dict_type)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/plistlib.py", line 869, in load
+    raise InvalidFileException()
+plistlib.InvalidFileException: Invalid file
+/dev/disk4 (external, physical):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:     FDisk_partition_scheme                        *4.0 TB     disk4
+   1:                 DOS_FAT_16 T7 Shield               34.5 MB    disk4s1
+                    (free space)                         4.0 TB     -
+
+/dev/disk9 (disk image):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      GUID_partition_scheme                        +194.7 MB   disk9
+   1:                 Apple_APFS Container disk10        194.7 MB   disk9s1
+
+/dev/disk10 (synthesized):
+   #:                       TYPE NAME                    SIZE       IDENTIFIER
+   0:      APFS Container Scheme -                      +194.7 MB   disk10
+                                 Physical Store disk9s1
+   1:                APFS Volume VirtualBox              159.5 MB   disk10s1
+
