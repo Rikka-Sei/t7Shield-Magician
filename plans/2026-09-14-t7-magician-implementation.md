@@ -223,11 +223,11 @@ graph TD
   - `pub fn atom_u64(a: &Atom) -> Result<u64, ProtocolError>`：短原子长度 8 → **小端**解释；其余长度 → **大端**；中/长原子 → `Err(SessionIdsMissing)`（§4.10 解码表）
 
 **Steps（TDD）:**
-1. [ ] 先写失败测试（`src/atom.rs` 的 `#[cfg(test)]`）：`tiny_uint(0) == [0x00]`、`tiny_uint(2) == [0x02]`、`uint(0x40) == [0x81,0x40]`、`bytes_atom(b"ABC") == [0xA3,b'A',b'B',b'C']`、`bytes_atom(&[b'A';32])[..2] == [0xD0,0x20]`、16 字节 → `[0xD0,0x10]`、`uid_atom(MBRCONTROL) == A8 00 00 08 03 00 00 00 01`、`walk_atoms` 对 8 字节短原子按小端取值（`88 11 22 33 44 55 66 77 88` → `0x8877665544332211`）、中/长原子取数值 → `Err(SessionIdsMissing)`。
-2. [ ] 运行 `nix develop --command cargo test -p t7-protocol`，确认因函数未定义而 FAIL。
-3. [ ] 实现 `atom.rs`/`uid.rs`/`error.rs` 至测试通过（不写任何额外编解码形式，§4.10 未列出的形式一律不实现）。
-4. [ ] 运行 `cargo test -p t7-protocol`、`cargo clippy -p t7-protocol --all-targets -- -D warnings`、`cargo fmt --all`，全绿。
-5. [ ] 提交：`git commit -S -m "feat: 实现 t7-protocol 原子编解码与错误模型"`。
+1. [x] 先写失败测试（`src/atom.rs` 的 `#[cfg(test)]`）：`tiny_uint(0) == [0x00]`、`tiny_uint(2) == [0x02]`、`uint(0x40) == [0x81,0x40]`、`bytes_atom(b"ABC") == [0xA3,b'A',b'B',b'C']`、`bytes_atom(&[b'A';32])[..2] == [0xD0,0x20]`、16 字节 → `[0xD0,0x10]`、`uid_atom(MBRCONTROL) == A8 00 00 08 03 00 00 00 01`、`walk_atoms` 对 8 字节短原子按小端取值（`88 11 22 33 44 55 66 77 88` → `0x8877665544332211`）、中/长原子取数值 → `Err(SessionIdsMissing)`。
+2. [x] 运行 `nix develop --command cargo test -p t7-protocol`，确认因函数未定义而 FAIL。
+3. [x] 实现 `atom.rs`/`uid.rs`/`error.rs` 至测试通过（不写任何额外编解码形式，§4.10 未列出的形式一律不实现）。
+4. [x] 运行 `cargo test -p t7-protocol`、`cargo clippy -p t7-protocol --all-targets -- -D warnings`、`cargo fmt --all`，全绿。
+5. [x] 提交：`git commit -S -m "feat: 实现 t7-protocol 原子编解码与错误模型"`。
 
 **Acceptance:** 上述编码逐条断言通过；`atom.rs` 中不存在 §4.10 未列出的编码分支。
 
@@ -254,10 +254,10 @@ graph TD
 - Consumes：`atom::walk_atoms`、`ProtocolError`。
 
 **Steps（TDD）:**
-1. [ ] 写失败测试：先在 `#[cfg(test)]` 内写测试助手 `synthetic_response(comid, body) -> Vec<u8>`（按附录 A4.1 的规则填充帧头），再用附录 A1 的 128 字节 StartSession 报文断言 `make_payload` 逐字节相等、`pkt[0x10..0x14] == BE32(总长-0x14)`、`pkt[0x28..0x2C] == BE32(总长-0x2C)`、`pkt[0x34..0x38] == BE32(令牌流长度)`；对附录 A4.1 的 37 字节体断言 `status_byte() == Some(0)` 与 `tokens()` 序列 `[ctl, atom, atom, ctl, atom, atom, ctl, ctl]`；对 `data_len = 2`/`1`/`0` 三种 fixture 断言状态字节取法与 `None`。
-2. [ ] 运行测试确认 FAIL。
-3. [ ] 实现 `frame.rs`。
-4. [ ] 测试 + clippy + fmt 全绿；提交 `git commit -S -m "feat: 实现 TCG 报文头构造与响应解析"`。
+1. [x] 写失败测试：先在 `#[cfg(test)]` 内写测试助手 `synthetic_response(comid, body) -> Vec<u8>`（按附录 A4.1 的规则填充帧头），再用附录 A1 的 128 字节 StartSession 报文断言 `make_payload` 逐字节相等、`pkt[0x10..0x14] == BE32(总长-0x14)`、`pkt[0x28..0x2C] == BE32(总长-0x2C)`、`pkt[0x34..0x38] == BE32(令牌流长度)`；对附录 A4.1 的 37 字节体断言 `status_byte() == Some(0)` 与 `tokens()` 序列 `[ctl, atom, atom, ctl, atom, atom, ctl, ctl]`；对 `data_len = 2`/`1`/`0` 三种 fixture 断言状态字节取法与 `None`。
+2. [x] 运行测试确认 FAIL。
+3. [x] 实现 `frame.rs`。
+4. [x] 测试 + clippy + fmt 全绿；提交 `git commit -S -m "feat: 实现 TCG 报文头构造与响应解析"`。
 
 **易错点:** 遍历必须在 `data_len - 5` 停止（否则把状态列表当参数）；8 字节原子的小端解释必须照抄（D04 的后果链依赖它）。
 
@@ -286,12 +286,12 @@ graph TD
 - `base_comid` = Opal SSC V2.00（feature `0x0203`）描述符起点 `+4` 的 BE16；`LockingFlags.raw` = Locking（feature `0x0002`）描述符起点 `+4` 的字节。
 
 **Steps（TDD）:**
-1. [ ] 先写 `fn test_level0_parses_base_comid()`（失败）：用附录 C 的 fixture（来源 `t7Shield-protocol/analysis/probe-linux.raw`，经 `tools/unlock/unlock.py` 固化）断言 `base_comid == 0x1004`、`locking.locked() == true`（raw `0x1f`）、`descriptors` 含 `0x0203` 与 `0x0002`；同文件内追加三个边界断言：16 字节响应 → `DiscoveryTooShort { len: 16 }`；只有 TPer+Locking 描述符 → `NoOpalSscDescriptor`；有 `0x0203` 无 `0x0002` → `LockingDescriptorMissing`。
-2. [ ] 追加 `fn test_unknown_pid_is_rejected()`（本 crate 侧只测 `identify_device`）：`(0x04e8, 0x61fc) → Locked`、`(0x04e8, 0x61fb) → Unlocked`、`(0x04e8, 0x61ff) → None`、`(0x1234, 0x61fc) → None`。
-3. [ ] 运行 `cargo test -p t7-protocol`，确认 FAIL。
-4. [ ] 实现 `discovery.rs`；测试全绿。
-5. [ ] AC-002 自查：`grep -rn "0x1004" crates/t7-protocol/src/` 只允许出现在 `#[cfg(test)]` 内，且以测试局部变量形式（如 `let observed_comid: u16 = 0x1004;`）出现；`base_comid` 在生产路径只来自 `parse_level0` 返回值。
-6. [ ] 提交：`git commit -S -m "feat: 实现 Level-0 Discovery 解析与设备识别"`。
+1. [x] 先写 `fn test_level0_parses_base_comid()`（失败）：用附录 C 的 fixture（来源 `t7Shield-protocol/analysis/probe-linux.raw`，经 `tools/unlock/unlock.py` 固化）断言 `base_comid == 0x1004`、`locking.locked() == true`（raw `0x1f`）、`descriptors` 含 `0x0203` 与 `0x0002`；同文件内追加三个边界断言：16 字节响应 → `DiscoveryTooShort { len: 16 }`；只有 TPer+Locking 描述符 → `NoOpalSscDescriptor`；有 `0x0203` 无 `0x0002` → `LockingDescriptorMissing`。
+2. [x] 追加 `fn test_unknown_pid_is_rejected()`（本 crate 侧只测 `identify_device`）：`(0x04e8, 0x61fc) → Locked`、`(0x04e8, 0x61fb) → Unlocked`、`(0x04e8, 0x61ff) → None`、`(0x1234, 0x61fc) → None`。
+3. [x] 运行 `cargo test -p t7-protocol`，确认 FAIL。
+4. [x] 实现 `discovery.rs`；测试全绿。
+5. [x] AC-002 自查：`grep -rn "0x1004" crates/t7-protocol/src/` 只允许出现在 `#[cfg(test)]` 内，且以测试局部变量形式（如 `let observed_comid: u16 = 0x1004;`）出现；`base_comid` 在生产路径只来自 `parse_level0` 返回值。
+6. [x] 提交：`git commit -S -m "feat: 实现 Level-0 Discovery 解析与设备识别"`。
 
 **Acceptance:** `test_level0_parses_base_comid` 可 grep 且通过；生产代码零 ComID 硬编码。
 
@@ -318,11 +318,11 @@ graph TD
 - 期望长度判据统一走 W03 的 `TcgResponse::expect_data_len(resp, 37, UnlockStep::StartSession)`（StartSession 应答 `data_len = 37`；步骤标识用 `UnlockStep::StartSession`，spec §5 的 `UnexpectedResponseLength { step, expected, actual }` 由该助手产出）。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_start_session_frame_golden()`（失败）：口令取 **16 字节**（`b"0123456789abcdef"`），断言 `start_session_payload` 与附录 A 的 128 字节黄金向量**逐字节相等**；再断言 3 字节口令（`b"ABC"`）产出 spec §4.10 记录的三段式（`... f2 00 a3 41 42 43 f3 ...`）、空口令**不构造** HostChallenge 块（D02：`F2 00 … F3` 整段缺席）。
-2. [ ] 写 `fn test_session_ids_swap_mapping()`（失败）：用附录 A 的 37 字节应答断言 `tsn == 00 00 10 1A`、`hsn == 00 00 00 01`；再断言「按 8 字节小端规则解读 token[4]/token[5]」不得产生交换后的值，并用一个把映射写反的负例夹具断言交换后的会话号与本实现结果不同（防止映射回归）。
-3. [ ] 写 `fn test_password_rejected_status_byte_one()`（失败）：附录 A 的假口令应答（`data_len = 37`、状态字节 `1`）→ `validate_outcome(...) == ValidateOutcome { accepted: false, status_byte: 1 }`；真口令 → `accepted: true, status_byte: 0`。
-4. [ ] 实现 `session.rs`/`password.rs`；三条锚点测试 + `cargo clippy -p t7-protocol --all-targets -- -D warnings` 全绿。
-5. [ ] 提交：`git commit -S -m "feat: 实现 StartSession 帧构造、会话号映射与口令校验"`。
+1. [x] 写 `fn test_start_session_frame_golden()`（失败）：口令取 **16 字节**（`b"0123456789abcdef"`），断言 `start_session_payload` 与附录 A 的 128 字节黄金向量**逐字节相等**；再断言 3 字节口令（`b"ABC"`）产出 spec §4.10 记录的三段式（`... f2 00 a3 41 42 43 f3 ...`）、空口令**不构造** HostChallenge 块（D02：`F2 00 … F3` 整段缺席）。
+2. [x] 写 `fn test_session_ids_swap_mapping()`（失败）：用附录 A 的 37 字节应答断言 `tsn == 00 00 10 1A`、`hsn == 00 00 00 01`；再断言「按 8 字节小端规则解读 token[4]/token[5]」不得产生交换后的值，并用一个把映射写反的负例夹具断言交换后的会话号与本实现结果不同（防止映射回归）。
+3. [x] 写 `fn test_password_rejected_status_byte_one()`（失败）：附录 A 的假口令应答（`data_len = 37`、状态字节 `1`）→ `validate_outcome(...) == ValidateOutcome { accepted: false, status_byte: 1 }`；真口令 → `accepted: true, status_byte: 0`。
+4. [x] 实现 `session.rs`/`password.rs`；三条锚点测试 + `cargo clippy -p t7-protocol --all-targets -- -D warnings` 全绿。
+5. [x] 提交：`git commit -S -m "feat: 实现 StartSession 帧构造、会话号映射与口令校验"`。
 
 **易错点:** 16 字节口令走**中字节串** `D0 10`（§4.10「16–2047 用中字节串」），不要写成 `A0 10`——这是最容易错的一处，黄金向量会拦住它。
 
@@ -349,11 +349,11 @@ graph TD
 - `Set` 类 InvokingID 是目标对象 UID；报文 `+0x14 = TSN`、`+0x18 = HSN`；`Set` 应答期望长度判据复用 `TcgResponse::expect_data_len(resp, 8, step)`。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_set_datastore_row_two_frame_golden()`（失败）：`SetRow(DATASTORE, 2, [0x03])` 的令牌流必须等于附录 A 的 `f8 a8 00 00 10 01 00 00 00 00 … a1 03 … f0 00 00 00 f1`，且完整报文总长 92；`unlock_sets()` 的第 1/2/3 项令牌流同样等于附录 A 的三条 cell 向量。
-2. [ ] 写 `fn test_empty_response_is_fatal()`（失败）：对 `data_len = 0` 的应答，`expect_data_len(resp, 8, UnlockStep::SetReadLocked)` → `Err(EmptyResponse { step: SetReadLocked })`；同时断言 StartTransaction/EndTransaction/EndSession 的空应答**不**作为失败判据（§5「判定链的关键区分」条目）——即这三步只校验状态字节与后续交叉验证。
-3. [ ] 写 `fn test_unexpected_response_length_rejected()`（失败）：`data_len = 36` → `UnexpectedResponseLength { step: EndSession, expected: 37, actual: 36 }`；`data_len = 9`（`Set` 期望 8）→ 同上变体且 `step = SetMbrControl`。
-4. [ ] 实现 `transaction.rs`；三条锚点 + clippy + fmt 全绿。
-5. [ ] 提交：`git commit -S -m "feat: 实现解锁事务序列帧构造与应答长度判据"`。
+1. [x] 写 `fn test_set_datastore_row_two_frame_golden()`（失败）：`SetRow(DATASTORE, 2, [0x03])` 的令牌流必须等于附录 A 的 `f8 a8 00 00 10 01 00 00 00 00 … a1 03 … f0 00 00 00 f1`，且完整报文总长 92；`unlock_sets()` 的第 1/2/3 项令牌流同样等于附录 A 的三条 cell 向量。
+2. [x] 写 `fn test_empty_response_is_fatal()`（失败）：对 `data_len = 0` 的应答，`expect_data_len(resp, 8, UnlockStep::SetReadLocked)` → `Err(EmptyResponse { step: SetReadLocked })`；同时断言 StartTransaction/EndTransaction/EndSession 的空应答**不**作为失败判据（§5「判定链的关键区分」条目）——即这三步只校验状态字节与后续交叉验证。
+3. [x] 写 `fn test_unexpected_response_length_rejected()`（失败）：`data_len = 36` → `UnexpectedResponseLength { step: EndSession, expected: 37, actual: 36 }`；`data_len = 9`（`Set` 期望 8）→ 同上变体且 `step = SetMbrControl`。
+4. [x] 实现 `transaction.rs`；三条锚点 + clippy + fmt 全绿。
+5. [x] 提交：`git commit -S -m "feat: 实现解锁事务序列帧构造与应答长度判据"`。
 
 **Acceptance:** 4 条 `Set` 的令牌流与 §4.7 表逐字节一致、顺序固定，且 `grep` 全 crate 只有一处顺序定义（`unlock_sets()`）；不追加任何额外 `Set`。
 
