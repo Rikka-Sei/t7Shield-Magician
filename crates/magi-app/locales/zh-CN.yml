@@ -1,0 +1,105 @@
+# magi-app 默认语言资源（zh-CN）。键集合必须与 en.yml 完全一致（有测试断言）。
+# 约定：所有用户可见文案只在此处与 en.yml 出现，代码与 .ui 内不内联可显示字符串（AC-015）。
+app:
+  title: "MagiShield"
+  subtitle: "Samsung Portable SSD T7 Shield（04e8:61fc / 04e8:61fb）"
+device:
+  group_title: "设备"
+  model: "Samsung Portable SSD T7 Shield"
+  vid_pid: "VID:PID"
+  node: "设备节点"
+  channel: "平台通道"
+  channel_macos: "IOKit 只读描述符侦察"
+  channel_linux: "SCSI 通用设备节点（SG_IO）"
+  descriptor_bot: "备用设置 proto 0x50（BOT）"
+  descriptor_uas: "备用设置 proto 0x62（UAS）"
+  descriptor_endpoints: "端点"
+  descriptor_other: "备用设置 proto %{proto}"
+status:
+  locked: "锁定态"
+  unlocked: "解锁态"
+  reenumerating: "重枚举中"
+  unrecognized: "未发现 T7 Shield"
+action:
+  unlock: "解锁"
+  validate_password: "校验口令"
+  set_password: "设置口令"
+  change_password: "修改口令"
+  delete_password: "删除口令"
+  cancel: "取消"
+  export_diagnostics: "导出诊断"
+reason:
+  evidence_gap: "口令写操作（设置/修改/删除）的字节级序列尚未被证实，当前不可执行"
+  reenumerating: "设备正在重枚举，请等待观察窗口结束"
+  not_locked: "设备当前不是锁定态，无需解锁"
+  platform_unavailable: "当前平台没有可用的 SCSI 通道（macOS 为已证实的平台限制）"
+  unrecognized: "未发现 T7 Shield，操作入口保持禁用"
+  retries_exhausted: "口令已被拒 3 次，请关闭并重新打开对话框后再试"
+progress:
+  idle: "就绪"
+  StartTransaction: "开始事务"
+  SetMbrDone: "提交 MBRDone"
+  SetReadLocked: "清除读锁定"
+  SetWriteLocked: "清除写锁定"
+  SetDataStoreRow2: "提交 DataStore 行 2"
+  EndTransaction: "提交事务"
+  EndSession: "关闭会话"
+result:
+  RealPartitionTable: "已解锁并挂载"
+  LockingFlags: "已解锁：Locking flags 由 0x1F 变为 0x3B"
+  PidChange: "设备已切换人格，分区表尚未确认"
+  none: "未观察到重枚举"
+  validate_accepted: "口令正确，未改动盘上状态"
+  validate_rejected: "口令错误，未改动盘上状态"
+  cancelled: "已由用户取消"
+  mounted: "挂载点：%{volumes}"
+password:
+  title: "输入口令"
+  body: "口令只用于本次操作：报文构造后立即清零，不写日志、不进剪贴板、不落盘。"
+  placeholder: "口令"
+  submit: "提交"
+  cancel: "取消"
+  empty: "口令不能为空"
+platform:
+  macos_notice: "macOS 上无可用 SCSI 通道（已证实平台限制），可识别设备但不能执行盘操作：%{issue}"
+  linux_notice: "Linux 上通过 SCSI 通用设备节点下发命令；权限不足时请自行授予节点读写权（本工具不提权）。"
+issue:
+  macos_transport: "issues/2026-09-14-macOS传输通道.md"
+  password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
+diagnostics:
+  title: "诊断导出"
+  redacted_note: "导出内容已脱敏：口令内容、长度与十六进制形态均已过滤"
+  entry_count: "缓冲条数"
+  export_failed: "诊断导出失败（写入目标文件时出错）"
+limit:
+  devices_exceeded: "设备数量超出上限（同时受理 8 个）"
+Busy:
+  reason: "该设备已有操作在执行"
+  advice: "等待当前操作结束，或关闭窗口后重新发起"
+PasswordRejected:
+  reason: "设备拒绝了该口令（SCSI 状态为 GOOD，方法状态字节为 1）"
+  advice: "确认口令后重新提交；连续 3 次被拒后需重新打开对话框"
+TransportUnavailable:
+  reason: "当前平台没有可用的 SCSI 通道（macOS 为已证实的平台限制）"
+  advice: "在 Linux 上使用本工具执行盘操作；macOS 仅支持只读描述符侦察"
+DeviceGone:
+  reason: "设备节点在操作期间消失（可能正在重枚举）"
+  advice: "等待设备重新枚举完成后重新发起操作"
+CommandTimeout:
+  reason: "单条命令超过 30 秒未返回"
+  advice: "确认设备连接稳定后重新发起操作；本工具不会自动重发命令"
+TransportFailure:
+  reason: "传输层返回了非 SCSI 语义的失败"
+  advice: "导出诊断信息并在 issues/ 中登记该现象"
+EmptyResponse:
+  reason: "会话内命令收到空应答（会话号错位的信号）"
+  advice: "终止本次操作并重新发起；不要依赖该次会话"
+PasswordOperationUnspecified:
+  reason: "口令写操作的字节级序列尚未被证实，本工具不执行该操作"
+  advice: "查阅 issues/2026-09-14-口令写操作证据缺口.md 了解证据状态"
+ProtocolFailure:
+  reason: "设备回复的报文不符合本规格的协议约定"
+  advice: "导出诊断信息并核对设备固件版本"
+EmptyPassword:
+  reason: "口令输入为空"
+  advice: "输入设备口令后重新提交"

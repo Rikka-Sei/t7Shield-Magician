@@ -1,4 +1,4 @@
-# t7-magician workspace：三 crate 单向依赖 t7-app → t7-protocol → t7-transport。
+# t7-magician workspace：三 crate 单向依赖 magi-app → magi-protocol → magi-transport。
 # 反向依赖禁止；协议行为以 docs/specs/t7-magician/spec.md 为唯一权威。
 [workspace]
 members = ["crates/*"]
@@ -11,8 +11,8 @@ rust-version = "1.92" # gtk4 0.11 的最低要求；nix develop 提供 rustc 1.9
 
 [workspace.dependencies]
 # 内部 crate（路径依赖，方向不可反转）
-t7-protocol = { path = "crates/t7-protocol" }
-t7-transport = { path = "crates/t7-transport" }
+magi-protocol = { path = "crates/magi-protocol" }
+magi-transport = { path = "crates/magi-transport" }
 
 # 平台通道：Linux SG_IO ioctl 与 errno 常量
 libc = "0.2"

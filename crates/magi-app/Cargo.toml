@@ -1,0 +1,22 @@
+[package]
+name = "magi-app"
+description = "T7 Shield 解锁客户端：GTK4 + libadwaita 界面与线程编排"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "magi"
+path = "src/main.rs"
+
+[dependencies]
+magi-protocol.workspace = true
+magi-transport.workspace = true
+gtk4.workspace = true
+libadwaita.workspace = true
+zeroize.workspace = true
+rust-i18n.workspace = true
+async-channel.workspace = true
