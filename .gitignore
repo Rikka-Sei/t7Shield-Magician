@@ -1,0 +1,5 @@
+*.code-workspace
+.DS_Store
+
+# direnv 本地缓存（.envrc 生成的工具链环境）
+.direnv/
