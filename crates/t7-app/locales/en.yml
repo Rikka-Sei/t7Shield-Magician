@@ -1,0 +1,102 @@
+# t7-app English resource. The key set must stay identical to zh-CN.yml (asserted by a test).
+# Convention: user-visible text lives only here and in zh-CN.yml; code and .ui files carry no
+# inline displayable strings (AC-015).
+app:
+  title: "T7 Shield Unlock Tool"
+  subtitle: "Samsung Portable SSD T7 Shield (04e8:61fc / 04e8:61fb)"
+device:
+  group_title: "Device"
+  model: "Samsung Portable SSD T7 Shield"
+  vid_pid: "VID:PID"
+  node: "Device node"
+  channel: "Platform channel"
+  channel_macos: "IOKit read-only descriptor scouting"
+  channel_linux: "SCSI generic device node (SG_IO)"
+  descriptor_bot: "Alternate setting proto 0x50 (BOT)"
+  descriptor_uas: "Alternate setting proto 0x62 (UAS)"
+  descriptor_endpoints: "Endpoints"
+status:
+  locked: "Locked"
+  unlocked: "Unlocked"
+  reenumerating: "Re-enumerating"
+  unrecognized: "No T7 Shield found"
+action:
+  unlock: "Unlock"
+  validate_password: "Validate password"
+  set_password: "Set password"
+  change_password: "Change password"
+  delete_password: "Delete password"
+  cancel: "Cancel"
+  export_diagnostics: "Export diagnostics"
+reason:
+  evidence_gap: "The byte-level sequence for password writes (set/change/delete) is not yet proven; this action is unavailable"
+  reenumerating: "The device is re-enumerating; wait for the observation window to end"
+  not_locked: "The device is not in the locked state, so unlocking is unnecessary"
+  unrecognized: "No T7 Shield found; the action entries stay disabled"
+  retries_exhausted: "The password was rejected 3 times; close and reopen the dialog before retrying"
+progress:
+  idle: "Ready"
+  StartTransaction: "Start transaction"
+  SetMbrDone: "Set MBRDone"
+  SetReadLocked: "Clear read lock"
+  SetWriteLocked: "Clear write lock"
+  SetDataStoreRow2: "Set DataStore row 2"
+  EndTransaction: "End transaction"
+  EndSession: "End session"
+result:
+  RealPartitionTable: "Unlocked and mounted"
+  LockingFlags: "Unlocked: Locking flags changed from 0x1F to 0x3B"
+  PidChange: "The device switched personality; the partition table is not confirmed yet"
+  none: "No re-enumeration observed"
+  validate_accepted: "Password accepted; no on-disk state changed"
+  validate_rejected: "Password rejected; no on-disk state changed"
+  cancelled: "Cancelled by the user"
+password:
+  title: "Enter password"
+  body: "The password is used for this operation only: it is zeroized right after the frame is built and never logged, copied to the clipboard, or persisted."
+  placeholder: "Password"
+  submit: "Submit"
+  cancel: "Cancel"
+  empty: "The password must not be empty"
+platform:
+  macos_notice: "No usable SCSI channel on macOS (a proven platform limitation): the device can be identified but disk operations cannot run: %{issue}"
+  linux_notice: "On Linux commands go through the SCSI generic device node; grant read/write access to the node yourself (this tool never escalates privileges)."
+issue:
+  macos_transport: "issues/2026-09-14-macOS传输通道.md"
+  password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
+diagnostics:
+  title: "Diagnostics export"
+  redacted_note: "The export is redacted: password content, length, and hex forms are all filtered out"
+  entry_count: "Buffered entries"
+limit:
+  devices_exceeded: "Device count exceeds the limit (8 devices handled at once)"
+Busy:
+  reason: "An operation is already running for this device"
+  advice: "Wait for the current operation to finish, or close the window and start again"
+PasswordRejected:
+  reason: "The device rejected this password (SCSI status is GOOD, method status byte is 1)"
+  advice: "Check the password and submit again; after 3 rejections reopen the dialog"
+TransportUnavailable:
+  reason: "No usable SCSI channel on this platform (a proven limitation on macOS)"
+  advice: "Run disk operations on Linux; macOS only supports read-only descriptor scouting"
+DeviceGone:
+  reason: "The device node disappeared during the operation (it may be re-enumerating)"
+  advice: "Retry after the device finishes re-enumerating"
+CommandTimeout:
+  reason: "A single command did not return within 30 seconds"
+  advice: "Check the connection and retry; this tool never resends a command automatically"
+TransportFailure:
+  reason: "The transport layer returned a non-SCSI-semantic failure"
+  advice: "Export diagnostics and register the observation under issues/"
+EmptyResponse:
+  reason: "A command inside the session returned an empty response (a session-number mismatch signal)"
+  advice: "Abort this operation and start over; do not trust this session"
+PasswordOperationUnspecified:
+  reason: "The byte-level sequence for password writes is not proven; this tool does not perform the operation"
+  advice: "See issues/2026-09-14-口令写操作证据缺口.md for the evidence status"
+ProtocolFailure:
+  reason: "The device reply does not match the protocol contract of this specification"
+  advice: "Export diagnostics and check the device firmware version"
+EmptyPassword:
+  reason: "The password input is empty"
+  advice: "Enter the device password and submit again"
