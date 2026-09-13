@@ -71,16 +71,15 @@ impl NavItem {
     }
 }
 
-/// 锁定状态徽章的样式类：锁定态醒目暖色、解锁态绿色、其余（重枚举/未识别/无设备）中性。
+/// 锁定状态徽章的语义类（libadwaita/GTK 内置，不依赖自定义样式表）：锁定 `warning`、
+/// 解锁 `success`、其余（重枚举/未识别/无设备）`dim-label`。
 pub fn badge_class(identity: DeviceIdentity) -> &'static str {
     match identity {
-        DeviceIdentity::Locked => "badge-locked",
-        DeviceIdentity::Unlocked => "badge-unlocked",
-        DeviceIdentity::ReEnumerating | DeviceIdentity::Unrecognized => "badge-neutral",
+        DeviceIdentity::Locked => "warning",
+        DeviceIdentity::Unlocked => "success",
+        DeviceIdentity::ReEnumerating | DeviceIdentity::Unrecognized => "dim-label",
     }
 }
-
-/// 窗口运行期状态（设备、入口闸门、取消标志、在飞动作与周期重扫状态机）。
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
     gate: UnlockGate,
@@ -112,11 +111,13 @@ mod imp {
         #[template_child]
         pub brand_label: TemplateChild<gtk::Label>,
         #[template_child]
-        pub nav_dashboard: TemplateChild<gtk::Button>,
+        pub nav_list: TemplateChild<gtk::ListBox>,
         #[template_child]
-        pub nav_diagnostics: TemplateChild<gtk::Button>,
+        pub nav_dashboard: TemplateChild<gtk::ListBoxRow>,
         #[template_child]
-        pub nav_about: TemplateChild<gtk::Button>,
+        pub nav_diagnostics: TemplateChild<gtk::ListBoxRow>,
+        #[template_child]
+        pub nav_about: TemplateChild<gtk::ListBoxRow>,
         #[template_child]
         pub nav_dashboard_label: TemplateChild<gtk::Label>,
         #[template_child]
@@ -251,7 +252,6 @@ impl MainWindow {
     /// 文案与初始状态：`.ui` 内无字面量，全部显示文本在此经 i18n 键赋值。
     fn setup(&self) {
         let imp = self.imp();
-        load_css();
         imp.window_title.set_title(&t!("app.title"));
         imp.window_title.set_subtitle(&t!("app.subtitle"));
         imp.brand_label.set_label(&t!("app.title"));
@@ -263,6 +263,11 @@ impl MainWindow {
             .set_label(&t!(NavItem::About.label_key()));
         imp.content_stack
             .set_visible_child_name(NavItem::Dashboard.page_name());
+        // 初始选中第一项:选中态由 GtkListBox 原生机制维护(此时导航回调尚未接线,
+        // 不会重入 show_page;页面可见性已由上一行直接设置)。
+        if let Some(row) = imp.nav_list.row_at_index(0) {
+            imp.nav_list.select_row(Some(&row));
+        }
         imp.dashboard_title_label.set_label(&t!("dashboard.title"));
         imp.diagnostics_title_label
             .set_label(&t!("diagnostics.view_title"));
@@ -321,18 +326,20 @@ impl MainWindow {
             this,
             move |_| this.export_diagnostics()
         ));
-        for (button, item) in [
-            (imp.nav_dashboard.get(), NavItem::Dashboard),
-            (imp.nav_diagnostics.get(), NavItem::Diagnostics),
-            (imp.nav_about.get(), NavItem::About),
-        ] {
-            let this = self.clone();
-            button.connect_clicked(glib::clone!(
-                #[weak]
-                this,
-                move |_| this.show_page(item)
-            ));
-        }
+        let this = self.clone();
+        imp.nav_list.connect_row_selected(glib::clone!(
+            #[weak]
+            this,
+            move |_, row| {
+                // 选中行序与 `NavItem::ALL` 一致;点击行时 GTK 自动选中 → 此处切页。
+                let Some(row) = row else {
+                    return;
+                };
+                if let Some(item) = NavItem::ALL.get(row.index() as usize) {
+                    this.show_page(*item);
+                }
+            }
+        ));
     }
 
     /// 权威轮次的设备刷新（§4.1/§4.5：Linux sysfs / macOS 只读描述符侦察）。
@@ -487,7 +494,7 @@ impl MainWindow {
     /// 状态徽章配色（锁定态醒目暖色、解锁态绿色、其余中性）。
     fn set_badge_class(&self, identity: DeviceIdentity) {
         let label = self.imp().status_label.get();
-        for class in ["badge-locked", "badge-unlocked", "badge-neutral"] {
+        for class in ["warning", "success", "dim-label"] {
             label.remove_css_class(class);
         }
         label.add_css_class(badge_class(identity));
@@ -539,23 +546,17 @@ impl MainWindow {
         &self.imp().state
     }
 
-    /// 切换页面并高亮当前导航项（对标原版侧边栏的选中态；选中态由 `NavItem` 唯一决定）。
+    /// 切换页面并同步导航选中态(选中唯一性由 `GtkListBox` 原生选中机制保证)。
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
-        let states = NavItem::selection_states(item);
-        for (button, nav) in [
-            (imp.nav_dashboard.get(), NavItem::Dashboard),
-            (imp.nav_diagnostics.get(), NavItem::Diagnostics),
-            (imp.nav_about.get(), NavItem::About),
-        ] {
-            let active = states
-                .iter()
-                .any(|(candidate, selected)| *candidate == nav && *selected);
-            if active {
-                button.add_css_class("active");
-            } else {
-                button.remove_css_class("active");
+        let index = NavItem::ALL
+            .iter()
+            .position(|candidate| *candidate == item)
+            .expect("NavItem 必须在 ALL 中") as i32;
+        if let Some(row) = imp.nav_list.row_at_index(index) {
+            if !row.is_selected() {
+                imp.nav_list.select_row(Some(&row));
             }
         }
         if item == NavItem::Diagnostics {
@@ -756,19 +757,6 @@ impl MainWindow {
     }
 }
 
-/// 加载界面样式（颜色与间距集中在 `ui/style.css`；文件内无文案）。
-fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_data(include_str!("ui/style.css"));
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -838,8 +826,12 @@ mod tests {
             );
         }
         assert!(NavItem::ALL.len() >= 3, "导航项至少 3 项");
-        // 模板初始态：恰有一个导航项带 active 类。
-        assert_eq!(xml.matches("name=\"active\"").count(), 1);
+        // 模板:导航容器挂内置 `.navigation-sidebar` 类,选中态由 GtkListBox 原生
+        // 选中机制保证(同一时刻至多一行选中,不再使用自定义 active 类)。
+        assert!(
+            xml.contains("<class name=\"navigation-sidebar\"/>"),
+            "侧边栏导航必须用内置 navigation-sidebar 类"
+        );
 
         // 纯逻辑：任意当前页下选中态恰 1 项且落在该项；页名与标签键互不重复且都能取到文案。
         let mut pages = std::collections::BTreeSet::new();
@@ -876,23 +868,32 @@ mod tests {
     /// 锚点（§10）：锁定状态徽章与设备态一一对应。
     #[test]
     fn test_lock_badge_matches_device_state() {
-        assert_eq!(badge_class(DeviceIdentity::Locked), "badge-locked");
-        assert_eq!(badge_class(DeviceIdentity::Unlocked), "badge-unlocked");
-        assert_eq!(badge_class(DeviceIdentity::ReEnumerating), "badge-neutral");
-        assert_eq!(badge_class(DeviceIdentity::Unrecognized), "badge-neutral");
-        // 无设备（非目标 PID → 未识别）落到中性徽章。
+        /// 徽章允许使用的内置语义类全集(libadwaita/GTK 自带;仓库内无自定义样式表)。
+        const BUILTIN_BADGE_CLASSES: [&str; 3] = ["warning", "success", "dim-label"];
+        assert_eq!(badge_class(DeviceIdentity::Locked), "warning");
+        assert_eq!(badge_class(DeviceIdentity::Unlocked), "success");
+        assert_eq!(badge_class(DeviceIdentity::ReEnumerating), "dim-label");
+        assert_eq!(badge_class(DeviceIdentity::Unrecognized), "dim-label");
+        // 无设备(非目标 PID → 未识别)落到弱化徽章。
         let no_device = DeviceIdentity::from_ids(magi_protocol::VENDOR_ID, 0x61ff);
         assert_eq!(no_device, DeviceIdentity::Unrecognized);
-        assert_eq!(badge_class(no_device), "badge-neutral");
-        // 锁定态与解锁态必须用不同徽章（醒目区分）。
+        assert_eq!(badge_class(no_device), "dim-label");
+        // 锁定态与解锁态必须用不同徽章(醒目区分)。
         assert_ne!(
             badge_class(DeviceIdentity::Locked),
             badge_class(DeviceIdentity::Unlocked)
         );
-        // 三个徽章样式类都在样式表里有定义（否则徽章没有配色）。
-        let css = include_str!("ui/style.css");
-        for class in ["badge-locked", "badge-unlocked", "badge-neutral"] {
-            assert!(css.contains(&format!(".{class}")), "样式表缺 .{class}");
+        // 全部身份的徽章类都必须是内置语义类(不依赖任何自定义样式表)。
+        for identity in [
+            DeviceIdentity::Locked,
+            DeviceIdentity::Unlocked,
+            DeviceIdentity::ReEnumerating,
+            DeviceIdentity::Unrecognized,
+        ] {
+            assert!(
+                BUILTIN_BADGE_CLASSES.contains(&badge_class(identity)),
+                "{identity:?} 的徽章类必须是内置语义类"
+            );
         }
     }
 

@@ -2,7 +2,9 @@
 <!--
   §4.12 主窗口模板（K5）：只承载结构与 id/class，不含任何用户可见字面量；
   全部文案在 MainWindow::setup() 里经 i18n 键赋值（locales/*.yml）。
-  布局对标 Samsung Magician：左侧深色侧边栏（品牌 + 设备小卡 + 分组导航）+ 右侧页面栈。
+  布局用 libadwaita 原生组件：AdwOverlaySplitView 侧边栏 + GtkListBox 挂内置
+  `.navigation-sidebar` 类做导航（选中态走 ListBox 原生选中机制），样式全部使用
+  libadwaita/GTK 内置类，无自定义样式表（深浅色跟随 AdwStyleManager 系统 默认）。
 -->
 <interface>
   <requires lib="gtk" version="4.10"/>
@@ -20,22 +22,21 @@
           </object>
         </child>
         <property name="content">
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <child>
+          <object class="AdwOverlaySplitView" id="split_view">
+            <property name="min-sidebar-width">240</property>
+            <property name="max-sidebar-width">280</property>
+            <property name="sidebar">
               <object class="GtkBox" id="sidebar">
                 <property name="orientation">vertical</property>
                 <property name="spacing">14</property>
-                <property name="width-request">240</property>
-                <style>
-                  <class name="sidebar"/>
-                </style>
                 <child>
                   <object class="GtkLabel" id="brand_label">
                     <property name="xalign">0</property>
                     <property name="halign">start</property>
+                    <property name="margin-top">6</property>
+                    <property name="margin-start">6</property>
                     <style>
-                      <class name="brand"/>
+                      <class name="title-3"/>
                     </style>
                   </object>
                 </child>
@@ -43,6 +44,8 @@
                   <object class="GtkBox" id="device_summary_card">
                     <property name="orientation">vertical</property>
                     <property name="spacing">6</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
                     <style>
                       <class name="card"/>
                     </style>
@@ -51,7 +54,7 @@
                         <property name="xalign">0</property>
                         <property name="halign">start</property>
                         <style>
-                          <class name="card-title"/>
+                          <class name="heading"/>
                         </style>
                       </object>
                     </child>
@@ -61,7 +64,7 @@
                         <property name="halign">start</property>
                         <property name="selectable">true</property>
                         <style>
-                          <class name="dim"/>
+                          <class name="dim-label"/>
                         </style>
                       </object>
                     </child>
@@ -70,28 +73,20 @@
                         <property name="xalign">0</property>
                         <property name="halign">start</property>
                         <style>
-                          <class name="badge"/>
-                          <class name="badge-neutral"/>
+                          <class name="dim-label"/>
                         </style>
                       </object>
                     </child>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkBox" id="nav_group">
-                    <property name="orientation">vertical</property>
-                    <property name="spacing">2</property>
+                  <object class="GtkListBox" id="nav_list">
+                    <property name="selection-mode">single</property>
                     <style>
-                      <class name="nav-group"/>
+                      <class name="navigation-sidebar"/>
                     </style>
                     <child>
-                      <object class="GtkButton" id="nav_dashboard">
-                        <property name="has-frame">false</property>
-                        <style>
-                          <class name="flat"/>
-                          <class name="nav-item"/>
-                          <class name="active"/>
-                        </style>
+                      <object class="GtkListBoxRow" id="nav_dashboard">
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">horizontal</property>
@@ -111,12 +106,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton" id="nav_diagnostics">
-                        <property name="has-frame">false</property>
-                        <style>
-                          <class name="flat"/>
-                          <class name="nav-item"/>
-                        </style>
+                      <object class="GtkListBoxRow" id="nav_diagnostics">
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">horizontal</property>
@@ -136,12 +126,7 @@
                       </object>
                     </child>
                     <child>
-                      <object class="GtkButton" id="nav_about">
-                        <property name="has-frame">false</property>
-                        <style>
-                          <class name="flat"/>
-                          <class name="nav-item"/>
-                        </style>
+                      <object class="GtkListBoxRow" id="nav_about">
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">horizontal</property>
@@ -169,14 +154,17 @@
                     <property name="wrap">true</property>
                     <property name="vexpand">true</property>
                     <property name="valign">end</property>
+                    <property name="margin-start">6</property>
+                    <property name="margin-end">6</property>
+                    <property name="margin-bottom">6</property>
                     <style>
-                      <class name="notice"/>
+                      <class name="dim-label"/>
                     </style>
                   </object>
                 </child>
               </object>
-            </child>
-            <child>
+            </property>
+            <property name="content">
               <object class="GtkStack" id="content_stack">
                 <property name="hexpand">true</property>
                 <property name="vexpand">true</property>
@@ -200,7 +188,7 @@
                                 <property name="xalign">0</property>
                                 <property name="halign">start</property>
                                 <style>
-                                  <class name="page-title"/>
+                                  <class name="title-1"/>
                                 </style>
                               </object>
                             </child>
@@ -232,7 +220,7 @@
                                         <property name="halign">start</property>
                                         <property name="wrap">true</property>
                                         <style>
-                                          <class name="dim"/>
+                                          <class name="dim-label"/>
                                         </style>
                                       </object>
                                     </child>
@@ -241,7 +229,7 @@
                                         <property name="xalign">0</property>
                                         <property name="halign">start</property>
                                         <style>
-                                          <class name="dim"/>
+                                          <class name="dim-label"/>
                                         </style>
                                       </object>
                                     </child>
@@ -257,7 +245,6 @@
                                   <object class="GtkButton" id="action_unlock">
                                     <style>
                                       <class name="suggested-action"/>
-                                      <class name="primary-action"/>
                                     </style>
                                   </object>
                                 </child>
@@ -301,20 +288,13 @@
                               </object>
                             </child>
                             <child>
-                              <object class="GtkProgressBar" id="progress">
-                                <style>
-                                  <class name="progress-bar"/>
-                                </style>
-                              </object>
+                              <object class="GtkProgressBar" id="progress"/>
                             </child>
                             <child>
                               <object class="GtkLabel" id="result_label">
                                 <property name="xalign">0</property>
                                 <property name="halign">start</property>
                                 <property name="wrap">true</property>
-                                <style>
-                                  <class name="result"/>
-                                </style>
                               </object>
                             </child>
                             <child>
@@ -323,7 +303,7 @@
                                 <property name="halign">start</property>
                                 <property name="wrap">true</property>
                                 <style>
-                                  <class name="notice"/>
+                                  <class name="dim-label"/>
                                 </style>
                               </object>
                             </child>
@@ -349,7 +329,7 @@
                             <property name="xalign">0</property>
                             <property name="halign">start</property>
                             <style>
-                              <class name="page-title"/>
+                              <class name="title-1"/>
                             </style>
                           </object>
                         </child>
@@ -359,7 +339,7 @@
                             <property name="halign">start</property>
                             <property name="wrap">true</property>
                             <style>
-                              <class name="dim"/>
+                              <class name="dim-label"/>
                             </style>
                           </object>
                         </child>
@@ -372,9 +352,6 @@
                                 <property name="cursor-visible">false</property>
                                 <property name="monospace">true</property>
                                 <property name="wrap-mode">word-char</property>
-                                <style>
-                                  <class name="diagnostics-view"/>
-                                </style>
                               </object>
                             </property>
                           </object>
@@ -410,7 +387,7 @@
                                 <property name="xalign">0</property>
                                 <property name="halign">start</property>
                                 <style>
-                                  <class name="page-title"/>
+                                  <class name="title-1"/>
                                 </style>
                               </object>
                             </child>
@@ -434,7 +411,7 @@
                                 <property name="halign">start</property>
                                 <property name="wrap">true</property>
                                 <style>
-                                  <class name="dim"/>
+                                  <class name="dim-label"/>
                                 </style>
                               </object>
                             </child>
@@ -445,7 +422,7 @@
                   </object>
                 </child>
               </object>
-            </child>
+            </property>
           </object>
         </property>
       </object>
