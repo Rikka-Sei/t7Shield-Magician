@@ -27,6 +27,57 @@ use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
 use crate::password_dialog::PasswordDialog;
 use crate::presentation::{self, AppError, AppEvent};
 
+/// 侧边栏导航项（对标原版 Magician 的分组导航列表；选中态恒唯一）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavItem {
+    /// 仪表盘：设备卡片、操作入口、进度与结果。
+    Dashboard,
+    /// 诊断：环形缓冲记录与脱敏导出。
+    Diagnostics,
+    /// 关于：版本与协议引用。
+    About,
+}
+
+impl NavItem {
+    /// 导航项全集（顺序即呈现顺序）。
+    pub const ALL: [NavItem; 3] = [NavItem::Dashboard, NavItem::Diagnostics, NavItem::About];
+
+    /// 页面栈中的页名。
+    pub fn page_name(self) -> &'static str {
+        match self {
+            NavItem::Dashboard => "dashboard",
+            NavItem::Diagnostics => "diagnostics",
+            NavItem::About => "about",
+        }
+    }
+
+    /// 导航项标签的 i18n 键。
+    pub fn label_key(self) -> &'static str {
+        match self {
+            NavItem::Dashboard => "nav.dashboard",
+            NavItem::Diagnostics => "nav.diagnostics",
+            NavItem::About => "nav.about",
+        }
+    }
+
+    /// 选中态：给定当前页，返回每个导航项的 `(项, 是否选中)`；选中项恰 1 个。
+    pub fn selection_states(active: NavItem) -> Vec<(NavItem, bool)> {
+        NavItem::ALL
+            .into_iter()
+            .map(|item| (item, item == active))
+            .collect()
+    }
+}
+
+/// 锁定状态徽章的样式类：锁定态醒目暖色、解锁态绿色、其余（重枚举/未识别/无设备）中性。
+pub fn badge_class(identity: DeviceIdentity) -> &'static str {
+    match identity {
+        DeviceIdentity::Locked => "badge-locked",
+        DeviceIdentity::Unlocked => "badge-unlocked",
+        DeviceIdentity::ReEnumerating | DeviceIdentity::Unrecognized => "badge-neutral",
+    }
+}
+
 /// 窗口运行期状态（设备、入口闸门、取消标志与在飞动作）。
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
@@ -199,10 +250,14 @@ impl MainWindow {
         imp.window_title.set_title(&t!("app.title"));
         imp.window_title.set_subtitle(&t!("app.subtitle"));
         imp.brand_label.set_label(&t!("app.title"));
-        imp.nav_dashboard_label.set_label(&t!("nav.dashboard"));
-        imp.nav_diagnostics_label.set_label(&t!("nav.diagnostics"));
-        imp.nav_about_label.set_label(&t!("nav.about"));
-        imp.content_stack.set_visible_child_name("dashboard");
+        imp.nav_dashboard_label
+            .set_label(&t!(NavItem::Dashboard.label_key()));
+        imp.nav_diagnostics_label
+            .set_label(&t!(NavItem::Diagnostics.label_key()));
+        imp.nav_about_label
+            .set_label(&t!(NavItem::About.label_key()));
+        imp.content_stack
+            .set_visible_child_name(NavItem::Dashboard.page_name());
         imp.dashboard_title_label.set_label(&t!("dashboard.title"));
         imp.diagnostics_title_label
             .set_label(&t!("diagnostics.view_title"));
@@ -261,16 +316,16 @@ impl MainWindow {
             this,
             move |_| this.export_diagnostics()
         ));
-        for (button, page) in [
-            (imp.nav_dashboard.get(), "dashboard"),
-            (imp.nav_diagnostics.get(), "diagnostics"),
-            (imp.nav_about.get(), "about"),
+        for (button, item) in [
+            (imp.nav_dashboard.get(), NavItem::Dashboard),
+            (imp.nav_diagnostics.get(), NavItem::Diagnostics),
+            (imp.nav_about.get(), NavItem::About),
         ] {
             let this = self.clone();
             button.connect_clicked(glib::clone!(
                 #[weak]
                 this,
-                move |_| this.show_page(page)
+                move |_| this.show_page(item)
             ));
         }
     }
@@ -397,12 +452,7 @@ impl MainWindow {
         for class in ["badge-locked", "badge-unlocked", "badge-neutral"] {
             label.remove_css_class(class);
         }
-        let class = match identity {
-            DeviceIdentity::Locked => "badge-locked",
-            DeviceIdentity::Unlocked => "badge-unlocked",
-            _ => "badge-neutral",
-        };
-        label.add_css_class(class);
+        label.add_css_class(badge_class(identity));
     }
 
     /// 平台限制文案（§4.5：macOS 呈现已证实限制与 `issues/` 指针）。
@@ -451,22 +501,26 @@ impl MainWindow {
         &self.imp().state
     }
 
-    /// 切换页面并高亮当前导航项（对标原版侧边栏的选中态）。
-    fn show_page(&self, page: &'static str) {
+    /// 切换页面并高亮当前导航项（对标原版侧边栏的选中态；选中态由 `NavItem` 唯一决定）。
+    fn show_page(&self, item: NavItem) {
         let imp = self.imp();
-        imp.content_stack.set_visible_child_name(page);
-        for (button, name) in [
-            (imp.nav_dashboard.get(), "dashboard"),
-            (imp.nav_diagnostics.get(), "diagnostics"),
-            (imp.nav_about.get(), "about"),
+        imp.content_stack.set_visible_child_name(item.page_name());
+        let states = NavItem::selection_states(item);
+        for (button, nav) in [
+            (imp.nav_dashboard.get(), NavItem::Dashboard),
+            (imp.nav_diagnostics.get(), NavItem::Diagnostics),
+            (imp.nav_about.get(), NavItem::About),
         ] {
-            if name == page {
+            let active = states
+                .iter()
+                .any(|(candidate, selected)| *candidate == nav && *selected);
+            if active {
                 button.add_css_class("active");
             } else {
                 button.remove_css_class("active");
             }
         }
-        if page == "diagnostics" {
+        if item == NavItem::Diagnostics {
             self.refresh_diagnostics_view();
         }
     }
@@ -719,6 +773,89 @@ mod tests {
             property_value(dialog, "show-peek-icon"),
             Some("false".to_string())
         );
+    }
+
+    /// 锚点（§10）：侧边栏导航 ≥3 项且选中态唯一。
+    #[test]
+    fn test_sidebar_navigation_items() {
+        // 结构：模板声明三个导航项与三个页面栈页名。
+        let xml = strip_comments(include_str!("ui/main_window.ui"));
+        let ids = collect_ids(&xml);
+        for (id, item) in [
+            ("nav_dashboard", NavItem::Dashboard),
+            ("nav_diagnostics", NavItem::Diagnostics),
+            ("nav_about", NavItem::About),
+        ] {
+            assert!(
+                ids.contains(&id.to_string()),
+                "侧边栏缺导航项 {id}：{ids:?}"
+            );
+            assert!(
+                xml.contains(&format!(
+                    "<property name=\"name\">{}</property>",
+                    item.page_name()
+                )),
+                "页面栈缺页 {}",
+                item.page_name()
+            );
+        }
+        assert!(NavItem::ALL.len() >= 3, "导航项至少 3 项");
+        // 模板初始态：恰有一个导航项带 active 类。
+        assert_eq!(xml.matches("name=\"active\"").count(), 1);
+
+        // 纯逻辑：任意当前页下选中态恰 1 项且落在该项；页名与标签键互不重复且都能取到文案。
+        let mut pages = std::collections::BTreeSet::new();
+        let mut keys = std::collections::BTreeSet::new();
+        for item in NavItem::ALL {
+            let states = NavItem::selection_states(item);
+            assert_eq!(states.len(), NavItem::ALL.len());
+            assert_eq!(
+                states.iter().filter(|(_, active)| *active).count(),
+                1,
+                "{item:?} 的选中态必须唯一"
+            );
+            assert!(states.contains(&(item, true)));
+            assert!(states
+                .iter()
+                .all(|(other, active)| *other == item || !*active));
+            pages.insert(item.page_name());
+            keys.insert(item.label_key());
+        }
+        assert_eq!(pages.len(), NavItem::ALL.len());
+        assert_eq!(keys.len(), NavItem::ALL.len());
+        for key in keys {
+            for locale in [
+                presentation::DEFAULT_LOCALE,
+                presentation::FALLBACK_LANGUAGE,
+            ] {
+                let text = rust_i18n::t!(key, locale = locale).to_string();
+                assert_ne!(text, key, "{locale} 缺少导航文案键 {key}");
+                assert!(!text.trim().is_empty());
+            }
+        }
+    }
+
+    /// 锚点（§10）：锁定状态徽章与设备态一一对应。
+    #[test]
+    fn test_lock_badge_matches_device_state() {
+        assert_eq!(badge_class(DeviceIdentity::Locked), "badge-locked");
+        assert_eq!(badge_class(DeviceIdentity::Unlocked), "badge-unlocked");
+        assert_eq!(badge_class(DeviceIdentity::ReEnumerating), "badge-neutral");
+        assert_eq!(badge_class(DeviceIdentity::Unrecognized), "badge-neutral");
+        // 无设备（非目标 PID → 未识别）落到中性徽章。
+        let no_device = DeviceIdentity::from_ids(magi_protocol::VENDOR_ID, 0x61ff);
+        assert_eq!(no_device, DeviceIdentity::Unrecognized);
+        assert_eq!(badge_class(no_device), "badge-neutral");
+        // 锁定态与解锁态必须用不同徽章（醒目区分）。
+        assert_ne!(
+            badge_class(DeviceIdentity::Locked),
+            badge_class(DeviceIdentity::Unlocked)
+        );
+        // 三个徽章样式类都在样式表里有定义（否则徽章没有配色）。
+        let css = include_str!("ui/style.css");
+        for class in ["badge-locked", "badge-unlocked", "badge-neutral"] {
+            assert!(css.contains(&format!(".{class}")), "样式表缺 .{class}");
+        }
     }
 
     /// 进度文案键与 7 个步骤一一对应（§4.13：文案经 i18n 键渲染）。

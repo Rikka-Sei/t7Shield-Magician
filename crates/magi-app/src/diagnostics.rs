@@ -341,7 +341,7 @@ mod tests {
     /// （`StartSession` 的载荷即口令明文、其长度即口令长度）。本测试用真实记录包装跑一遍
     /// 口令校验，再检查导出文本。
     #[test]
-    fn test_diagnostics_export_redacts_password() {
+    fn test_diagnostics_export_is_redacted() {
         use crate::test_support::{response_frame, FakeTransport, START_SESSION_BODY_ACCEPTED};
         use magi_protocol::run_validate_password;
 

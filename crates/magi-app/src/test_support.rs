@@ -10,6 +10,9 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::thread::ThreadId;
 use std::time::Duration;
 
 use magi_protocol::frame::make_payload;
@@ -48,16 +51,37 @@ pub struct Exchange {
 
 /// GTK 初始化探针（K6）：可用返回 `true`；不可用打印跳过原因后返回 `false`。
 ///
-/// macOS 上 `gtk::init()` 在非主线程会 panic（gtk4-rs 在 `set_initialized` 里断言
-/// `pthread_main_np() != 0`），而 `cargo test` 默认在线程池中运行用例，因此这里把
-/// 「无 display」与「不在主线程」两种情况都归入跳过，且不 `#[ignore]`（屏障不会被跳过）。
+/// 平台约束：GTK 只能初始化一次，且（在 macOS 上）必须绑定在初始化它的那个线程上。
+/// `cargo test` 默认在线程池里并发跑用例，因此这里做两件事：
+/// - 用互斥量串行化探针，避免多线程同时初始化 GTK 触发 GLib 致命断言（SIGTRAP）；
+/// - 记录首个成功初始化的线程，其他线程一律跳过（它们无法合法使用已初始化的 GTK）。
+///
+/// 跳过路径不 `#[ignore]`（屏障不会被跳过），真窗口由 `cargo run -p magi-app` 的冒烟运行验证。
 pub fn gtk_ready(test_name: &str) -> bool {
+    static PROBE_LOCK: Mutex<()> = Mutex::new(());
+    static OWNER: OnceLock<ThreadId> = OnceLock::new();
+
+    let _guard = PROBE_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let current = thread::current().id();
+    if let Some(owner) = OWNER.get() {
+        if *owner != current {
+            eprintln!(
+                "跳过 {test_name}：GTK 已由另一线程初始化，本平台要求 GTK 只在其初始化线程上使用"
+            );
+            return false;
+        }
+        return true;
+    }
+
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let probed = std::panic::catch_unwind(gtk4::init);
     std::panic::set_hook(hook);
     match probed {
-        Ok(Ok(())) => true,
+        Ok(Ok(())) => {
+            let _ = OWNER.set(current);
+            true
+        }
         Ok(Err(err)) => {
             eprintln!("跳过 {test_name}：无法初始化 GTK（{err}），本用例需要 display");
             false
