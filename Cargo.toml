@@ -1,0 +1,36 @@
+# t7-magician workspace：三 crate 单向依赖 t7-app → t7-protocol → t7-transport。
+# 反向依赖禁止；协议行为以 docs/specs/t7-magician/spec.md 为唯一权威。
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92" # gtk4 0.11 的最低要求；nix develop 提供 rustc 1.97
+
+[workspace.dependencies]
+# 内部 crate（路径依赖，方向不可反转）
+t7-protocol = { path = "crates/t7-protocol" }
+t7-transport = { path = "crates/t7-transport" }
+
+# 平台通道：Linux SG_IO ioctl 与 errno 常量
+libc = "0.2"
+
+# 口令缓冲生命周期（Password 持有 Zeroizing<Vec<u8>>）
+zeroize = "1.9"
+
+# UI 层：GTK4 / libadwaita 绑定与 i18n、工作线程通道
+gtk4 = { version = "0.11.4", features = ["v4_10"] } # nix 提供 GTK 4.22.4
+libadwaita = { version = "0.9.2", features = ["v1_6"] } # nix 提供 libadwaita 1.9.3
+rust-i18n = "4.2"
+async-channel = "2.5"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+correctness = "deny"
+
+[profile.release]
+lto = "thin"

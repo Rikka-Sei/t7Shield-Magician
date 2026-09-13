@@ -1,0 +1,3 @@
+# clippy 配置：只做有限调整，不全局开启 pedantic。
+# msrv 与 [workspace.package] rust-version 保持一致，避免用到 nix develop 之外的 API。
+msrv = "1.92"
