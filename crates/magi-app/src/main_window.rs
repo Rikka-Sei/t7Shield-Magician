@@ -5,6 +5,8 @@
 //!
 //! 主流程（§4.13）：启动即扫描设备 → 更新设备卡片/状态/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
+//! 设备热插拔（§4.1 REQ-001）：工作线程周期重扫，经 MainContext channel 回主线程，
+//! 由重扫状态机（[`crate::controller::RescanState`]）统一裁决设备卡片与入口更新。
 
 use std::cell::RefCell;
 
@@ -19,8 +21,8 @@ use magi_protocol::{Password, UnlockEvidence, UnlockStep};
 use rust_i18n::t;
 
 use crate::controller::{
-    self, ActionId, DeviceIdentity, PlatformCapability, PlatformNotice, UnlockGate,
-    REASON_PLATFORM_UNAVAILABLE,
+    self, ActionId, DeviceIdentity, PlatformCapability, PlatformNotice, RescanAction, RescanState,
+    UnlockGate, REASON_PLATFORM_UNAVAILABLE,
 };
 use crate::diagnostics::{self, Level};
 use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
@@ -78,13 +80,15 @@ pub fn badge_class(identity: DeviceIdentity) -> &'static str {
     }
 }
 
-/// 窗口运行期状态（设备、入口闸门、取消标志与在飞动作）。
+/// 窗口运行期状态（设备、入口闸门、取消标志、在飞动作与周期重扫状态机）。
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
     gate: UnlockGate,
     device: Option<DeviceJob>,
     cancel: CancelFlag,
     action: Option<ActionId>,
+    /// 周期重扫状态机：呈现中身份、在位缓存与空态防抖计数。
+    rescan: RescanState,
 }
 
 mod imp {
@@ -234,13 +238,14 @@ impl MainWindow {
         });
     }
 
-    /// 启动装配（§4.13）：注册事件汇、接线入口、扫描设备。
+    /// 启动装配（§4.13）：注册事件汇、接线入口、扫描设备并启动周期重扫监控。
     pub fn start(&self) {
         let this = self.clone();
         jobs::set_event_sink(move |event| this.on_event(event));
         self.connect_actions();
         self.refresh_devices();
         self.refresh_actions();
+        self.spawn_device_watch();
     }
 
     /// 文案与初始状态：`.ui` 内无字面量，全部显示文本在此经 i18n 键赋值。
@@ -330,38 +335,71 @@ impl MainWindow {
         }
     }
 
-    /// 扫描设备并更新设备卡片（§4.1/§4.5：Linux sysfs / macOS 只读描述符侦察）。
+    /// 权威轮次的设备刷新（§4.1/§4.5：Linux sysfs / macOS 只读描述符侦察）。
+    ///
+    /// 同步取数并强制呈现（启动与会话收尾 §3.3：会话收尾后必须重新读取设备态再裁决
+    /// 呈现）；扫描失败在此呈现为错误（§4.13）。周期轮次改走 [`Self::spawn_device_watch`]
+    /// 的事件路径，失败只记诊断、不打扰结果区。
     fn refresh_devices(&self) {
         let capability = PlatformCapability::current();
         self.show_platform_notice(&controller::platform_notice(capability));
+        let outcome = jobs::fetch_scan();
+        if let Some(error) = &outcome.error {
+            self.show_error(error);
+        }
+        self.apply_scan(&outcome, true);
+    }
 
-        let hits = match jobs::scan_devices() {
-            Ok(hits) => hits,
-            Err(error) => {
-                self.show_error(&error);
-                Vec::new()
-            }
+    /// 呈现段（主线程）：按重扫状态机裁决并更新设备卡片、徽章与入口。
+    ///
+    /// `authoritative`：启动与会话收尾的轮次无视在飞状态强制收敛；周期轮次在作业在飞时
+    /// 只更新在位缓存，不改呈现（§6：不打断用户正在看的进度与结果）。
+    fn apply_scan(&self, outcome: &jobs::ScanOutcome, authoritative: bool) {
+        let in_flight = !authoritative && jobs::any_job_in_flight();
+        let identity = outcome.hits.first().map(|hit| hit.job.identity);
+        let action = {
+            let mut state = self.state().borrow_mut();
+            let (next, action) = state.rescan.observe(identity, in_flight);
+            state.rescan = next;
+            action
         };
-        let (hits, limit_key) = controller::clamp_devices(hits);
-        if let Some(key) = limit_key {
-            // §6：同时受理设备上限 8 个，超出部分不呈现并给出提示。
-            diagnostics::ring().record(Level::Warn, key);
-        }
-
-        let mut state = self.state().borrow_mut();
-        match hits.first() {
-            Some(hit) => {
-                state.device = Some(hit.job.clone());
-                drop(state);
+        match action {
+            RescanAction::Keep => {}
+            RescanAction::ShowHit => {
+                let Some(hit) = outcome.hits.first() else {
+                    return;
+                };
+                self.state().borrow_mut().device = Some(hit.job.clone());
                 self.show_hit(hit);
+                self.refresh_actions();
             }
-            None => {
-                state.device = None;
-                drop(state);
+            RescanAction::ShowEmpty => {
+                self.state().borrow_mut().device = None;
                 self.show_unknown_device();
+                self.refresh_actions();
             }
         }
-        self.refresh_actions();
+    }
+
+    /// 设备热插拔监控装配（§4.1 REQ-001）：工作线程周期重扫，结果经 `async_channel`
+    /// 回主线程 `MainContext` 消费（与作业事件同一通道形态）；GTK 侧只做装配。
+    fn spawn_device_watch(&self) {
+        let (sender, receiver) = async_channel::unbounded::<jobs::ScanOutcome>();
+        if let Err(error) = jobs::spawn_scan_watch(sender) {
+            // 监控线程创建失败与扫描失败同口径呈现（§5）；启动扫描仍已完成。
+            self.show_error(&error);
+            return;
+        }
+        let this = self.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(outcome) = receiver.recv().await {
+                if let Some(error) = &outcome.error {
+                    // 周期轮次的扫描失败不进结果区（结果区属于作业呈现），只记诊断。
+                    diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
+                }
+                this.apply_scan(&outcome, false);
+            }
+        });
     }
 
     /// 按平台能力 + 设备态 + 重试预算刷新入口敏感度与禁用理由（§4.12/§4.11/§4.5）。

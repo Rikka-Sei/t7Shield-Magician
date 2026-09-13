@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use async_channel::Receiver;
 use gtk4::glib;
@@ -27,6 +28,10 @@ use crate::presentation::{AppError, AppEvent};
 
 /// 全局单飞注册表：每设备 1 个工作线程（§6）。
 static REGISTRY: LazyLock<JobRegistry> = LazyLock::new(JobRegistry::new);
+/// 是否有任一设备作业在飞（§4.13：周期重扫在飞轮次只记在位缓存，不改呈现）。
+pub fn any_job_in_flight() -> bool {
+    REGISTRY.in_flight() > 0
+}
 
 /// 主线程事件汇的条目类型（`Fn` 闭包持有 glib 控件，不要求 `Send`）。
 type EventSink = Box<dyn Fn(AppEvent)>;
@@ -177,6 +182,61 @@ impl ProgressReporter for EventReporter<'_> {
 /// 扫描本机的 T7 Shield（§4.1/§4.5）：Linux 走 sysfs 扫描；macOS 走只读描述符侦察。
 pub fn scan_devices() -> Result<Vec<ScanHit>, AppError> {
     platform_scan()
+}
+
+/// 周期重扫间隔（§4.1 REQ-001：设备接入后自动识别）。
+///
+/// 2 s：远小于人手插拔的最小间隔，插入后最多一个间隔即呈现；扫描在工作线程执行，
+/// 主线程只收事件，不占「单帧 ≤ 100 ms」的预算（§6）。常量集中定义于此。
+pub const RESCAN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// 一轮设备扫描的结果（取数段输出、呈现段输入；跨线程投递给主线程）。
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    /// 命中的设备（已裁剪到同时受理上限，§6）。
+    pub hits: Vec<ScanHit>,
+    /// 扫描失败（呈现段裁决是否打扰用户：权威轮次呈现，周期轮次只记诊断）。
+    pub error: Option<AppError>,
+}
+
+/// 取数段：扫描本机设备并裁剪到受理上限（§4.1/§6；诊断环线程安全，工作线程可记录）。
+pub fn fetch_scan() -> ScanOutcome {
+    match scan_devices() {
+        Ok(hits) => {
+            let (hits, limit_key) = controller::clamp_devices(hits);
+            if let Some(key) = limit_key {
+                // §6：同时受理设备上限 8 个，超出部分不呈现并给出提示。
+                crate::diagnostics::ring().record(crate::diagnostics::Level::Warn, key);
+            }
+            ScanOutcome { hits, error: None }
+        }
+        Err(error) => ScanOutcome {
+            hits: Vec::new(),
+            error: Some(error),
+        },
+    }
+}
+
+/// 启动周期设备监控线程（§4.1 REQ-001 热插拔感知）：每 [`RESCAN_INTERVAL`] 取数一轮，
+/// 把结果经 `sender` 投回主线程呈现；接收端关闭（主循环退出）后线程自行结束。
+///
+/// 线程创建失败返回 `AppError::Transport(Platform)`（§5，与 [`run_device_job`] 同口径），
+/// 不启动监控。
+pub fn spawn_scan_watch(sender: async_channel::Sender<ScanOutcome>) -> Result<(), AppError> {
+    let spawned = thread::Builder::new()
+        .name(String::from("t7-device-watch"))
+        .spawn(move || loop {
+            thread::sleep(RESCAN_INTERVAL);
+            // 接收端已随主循环退出 → 结束监控线程（句柄即弃，线程自行收尾）。
+            if sender.send_blocking(fetch_scan()).is_err() {
+                break;
+            }
+        });
+    spawned.map(drop).map_err(|err| {
+        AppError::Transport(TransportError::Platform {
+            code: err.raw_os_error().map(i64::from).unwrap_or(-1),
+        })
+    })
 }
 
 /// macOS：只读描述符侦察（不打开设备、不 claim、不发 CDB）。
