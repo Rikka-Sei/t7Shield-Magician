@@ -208,6 +208,8 @@ impl UnlockSession {
 
         let resp = raw.parse(START_SESSION_RESPONSE_LEN, CommandStep::StartSession)?;
         let outcome = session::validate_outcome(&resp)?;
+        // §4.7：StartSession 应答的回显决定本次操作的状态列表形态，判定一次、操作内不变。
+        self.form = crate::frame::detect_status_list_form(&resp);
         if outcome.accepted {
             let ids = session::session_ids_from_response(&resp)?;
             self.ids = ids;
@@ -338,8 +340,8 @@ fn unlock_sequence<T: Transport>(
     }
     session.context.session_state = SessionState::SessionOpen;
     let ids = session.ids;
-    // §3.2 零值规则：会话号为零值禁止发送 StartTransaction 及其后的任何命令。
-    if ids.tsn == [0, 0, 0, 0] && ids.hsn == [0, 0, 0, 0] {
+    // §3.2 零值规则：`tsn`/`hsn` 为零值禁止发送 StartTransaction 及其后的任何命令。
+    if ids.tsn == [0, 0, 0, 0] || ids.hsn == [0, 0, 0, 0] {
         session.context.session_state = SessionState::Failed;
         return Err(RunError::Protocol(ProtocolError::SessionIdsMissing));
     }
@@ -965,6 +967,44 @@ mod tests {
         );
     }
 
+    /// §4.7：StartSession 应答尾部回显双列表形态 → 本次操作其余帧改用 `Two`。
+    #[test]
+    fn test_status_list_form_two_is_adopted_for_the_operation() {
+        // 37 字节应答体：令牌区 27 字节 + 10 字节双列表（末尾 `F0 00 00 00 F1` 重复两次）。
+        let double_body = hex("f8 a8 00 00 00 00 00 00 00 ff a8 00 00 00 00 00 00 ff 02 f0
+             01 82 10 1a 80 80 80 f0 00 00 00 f1 f0 00 00 00 f1");
+        assert_eq!(double_body.len(), 37);
+        let fake = FakeTransport::new(vec![
+            Ok(synthetic_response(TEST_COMID, &double_body)),
+            Ok(synthetic_response(TEST_COMID, &hex("fb 00"))),
+            Ok(set_response(0)),
+            Ok(set_response(0)),
+            Ok(set_response(0)),
+            Ok(set_response(0)),
+            Ok(synthetic_response(TEST_COMID, &hex("fc 00"))),
+            Ok(synthetic_response(TEST_COMID, &hex("fa"))),
+        ]);
+        let mut reporter = StepLog::default();
+        let mut pwd = Password::new(b"0123456789abcdef".to_vec());
+        let session = run_unlock(&fake, TEST_COMID, &mut pwd, &mut reporter, &|| false)
+            .expect("解锁必须成功");
+        assert_eq!(session.state(), SessionState::Closed);
+        assert_eq!(session.ids().hsn, [0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(session.ids().tsn, [0x00, 0x00, 0x10, 0x1A]);
+
+        let outs = fake.out_payloads();
+        // StartSession 自身固定单列表；其后 7 条命令一律使用双列表形态（总长 68/96）。
+        for pkt in &outs[1..] {
+            assert!(
+                tokens_of(pkt).ends_with(&crate::frame::STATUS_LIST_TWO),
+                "双列表形态必须贯穿本次操作"
+            );
+        }
+        assert_eq!(outs[1].len(), 68, "FB 双列表载荷总长");
+        assert_eq!(outs[7].len(), 68, "FA 双列表载荷总长");
+        assert_eq!(outs[2].len(), 100, "Set 双列表载荷总长");
+    }
+
     /// 取消发生在事务中间：已发出的命令不重放，会话保持打开待调用方收尾。
     #[test]
     fn test_cancel_in_transaction_keeps_session_open() {
@@ -991,7 +1031,7 @@ mod tests {
         assert_eq!(fake.out_payloads().len(), 4);
     }
 
-    /// 前置条件：会话号为零值（§3.2 零值规则）时拒绝进入事务。
+    /// 前置条件：会话号为零值（§3.2 零值规则）时拒绝进入事务——`tsn`/`hsn` 任一为零即拒绝。
     #[test]
     fn test_zero_session_ids_block_transactions() {
         // token[4]/token[5] 都解出 0（长度 0 的短原子与全零 8 字节原子），data_len 仍为 37。
@@ -1009,5 +1049,19 @@ mod tests {
         );
         assert_eq!(fake.out_payloads().len(), 1, "StartSession 之后再无命令");
         assert!(reporter.steps().is_empty());
+
+        // 只有 TSN 为零（HSN = 1）同样禁止进入事务。
+        let tsn_zero = synthetic_response(
+            TEST_COMID,
+            &hex("f8 a8 00 00 00 00 00 00 00 ff a8 00 00 00 00 00 00 ff 02 f0
+                 01 80 80 80 80 80 80 80 80 80 f1 f9 f0 00 00 00 f1"),
+        );
+        let fake = FakeTransport::new(vec![Ok(tsn_zero)]);
+        let mut pwd = Password::new(b"hunter2".to_vec());
+        assert_eq!(
+            run_unlock(&fake, TEST_COMID, &mut pwd, &mut reporter, &|| false),
+            Err(RunError::Protocol(ProtocolError::SessionIdsMissing))
+        );
+        assert_eq!(fake.out_payloads().len(), 1);
     }
 }
