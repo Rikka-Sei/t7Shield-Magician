@@ -718,6 +718,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "magi-app"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gtk4",
+ "libadwaita",
+ "magi-protocol",
+ "magi-transport",
+ "rust-i18n",
+ "zeroize",
+]
+
+[[package]]
+name = "magi-protocol"
+version = "0.1.0"
+dependencies = [
+ "magi-transport",
+ "zeroize",
+]
+
+[[package]]
+name = "magi-transport"
+version = "0.1.0"
+dependencies = [
+ "core-foundation",
+ "io-kit-sys",
+ "libc",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1117,36 +1147,6 @@ dependencies = [
  "pkg-config",
  "toml 1.1.6+spec-1.1.0",
  "version-compare",
-]
-
-[[package]]
-name = "t7-app"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gtk4",
- "libadwaita",
- "rust-i18n",
- "t7-protocol",
- "t7-transport",
- "zeroize",
-]
-
-[[package]]
-name = "t7-protocol"
-version = "0.1.0"
-dependencies = [
- "t7-transport",
- "zeroize",
-]
-
-[[package]]
-name = "t7-transport"
-version = "0.1.0"
-dependencies = [
- "core-foundation",
- "io-kit-sys",
- "libc",
 ]
 
 [[package]]
