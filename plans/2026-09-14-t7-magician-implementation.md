@@ -514,13 +514,13 @@ graph TD
 - i18n 键集（`locales/zh-CN.yml` 与 `en.yml` 键完全对齐）：设备卡片（型号/VID:PID/设备节点或平台通道）、锁定/解锁状态、进度（7 步）、结果（含 §4.8 三种判据的区分文案：「已解锁并挂载」/「设备已切换人格，分区表尚未确认」/「未观察到重枚举」）、错误（10 个呈现码 × reason/advice）、平台限制文案（macOS 上「无可用 SCSI 通道（已证实平台限制）」+ `issues/2026-09-14-macOS传输通道.md` 指针）、口令写操作证据缺口文案（+ `issues/2026-09-14-口令写操作证据缺口.md` 指针）。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_locked_device_actions_disabled()`（失败）：断言完整启用矩阵——`Some(Locked)` 时 Unlock/ValidatePassword 为 true、三个写口令入口为 false（受证据缺口约束），`Some(Unlocked)`/`Some(ReEnumerating)`/`None` 全部 false；测试名沿用 spec §10 的锚点名（其覆盖描述为「设备态驱动的入口启用与禁用」，矩阵式断言同时覆盖「锁定态下写类入口禁用」与「非锁定态下全部禁用」两种读法）。
-2. [ ] 写 `fn test_unknown_pid_is_rejected()`（失败）：`t7_protocol::identify_device(0x04e8, 0x61ff) == None` 且 `allowed_actions(None)` 全 false；再断言控制器的操作入口在未识别设备上返回「未发现 T7 Shield」且**未调用任何 transport**（用计数型假 transport 断言 `execute` 调用次数为 0）。
-3. [ ] 写 `fn test_empty_password_rejected()`（失败）：`validate_password_input("") == Err(EmptyPassword)`、`"   "` 同样；非空返回 `Ok(Password)` 且 `expose()` 长度等于输入字节数。
-4. [ ] 写 `fn test_duplicate_trigger_is_busy()`（失败）：同一 `DeviceId` 第二次 `try_begin` → `Err(Busy)`；guard drop 后再次 `try_begin` → `Ok`；不同 `DeviceId` 并行 → 均 `Ok`。
-5. [ ] 写呈现码表测试：10 个 `AppError` 取值逐一断言 `presentation_code` 与 spec §4.13 表一致（含 `Transport(Unavailable) → TransportUnavailable`、`Protocol(EmptyResponse{..}) → EmptyResponse`）。
-6. [ ] 实现上述模块 + 两个 locale 文件（键严格对齐，缺键即测试失败：加一条断言 `zh-CN` 与 `en` 的键集合相等）。
-7. [ ] 测试 + clippy + fmt 全绿；提交 `git commit -S -m "feat: 实现应用层入口规则、单飞约束与国际化资源"`。
+1. [x] 写 `fn test_locked_device_actions_disabled()`（失败）：断言完整启用矩阵——`Some(Locked)` 时 Unlock/ValidatePassword 为 true、三个写口令入口为 false（受证据缺口约束），`Some(Unlocked)`/`Some(ReEnumerating)`/`None` 全部 false；测试名沿用 spec §10 的锚点名（其覆盖描述为「设备态驱动的入口启用与禁用」，矩阵式断言同时覆盖「锁定态下写类入口禁用」与「非锁定态下全部禁用」两种读法）。
+2. [x] 写 `fn test_unknown_pid_is_rejected()`（失败）：`t7_protocol::identify_device(0x04e8, 0x61ff) == None` 且 `allowed_actions(None)` 全 false；再断言控制器的操作入口在未识别设备上返回「未发现 T7 Shield」且**未调用任何 transport**（用计数型假 transport 断言 `execute` 调用次数为 0）。
+3. [x] 写 `fn test_empty_password_rejected()`（失败）：`validate_password_input("") == Err(EmptyPassword)`、`"   "` 同样；非空返回 `Ok(Password)` 且 `expose()` 长度等于输入字节数。
+4. [x] 写 `fn test_duplicate_trigger_is_busy()`（失败）：同一 `DeviceId` 第二次 `try_begin` → `Err(Busy)`；guard drop 后再次 `try_begin` → `Ok`；不同 `DeviceId` 并行 → 均 `Ok`。
+5. [x] 写呈现码表测试：10 个 `AppError` 取值逐一断言 `presentation_code` 与 spec §4.13 表一致（含 `Transport(Unavailable) → TransportUnavailable`、`Protocol(EmptyResponse{..}) → EmptyResponse`）。
+6. [x] 实现上述模块 + 两个 locale 文件（键严格对齐，缺键即测试失败：加一条断言 `zh-CN` 与 `en` 的键集合相等）。
+7. [x] 测试 + clippy + fmt 全绿；提交 `git commit -S -m "feat: 实现应用层入口规则、单飞约束与国际化资源"`。
 
 **Acceptance:** 四条锚点可 grep 且通过（无需 display）；呈现码表逐项一致；`zh-CN`/`en` 键集合相等。
 
@@ -543,11 +543,11 @@ graph TD
 - 口令生命周期：提交 → 取 `entry.text()` → `Password::new(bytes)` → 构造报文后立即 `zeroize_now()` → `PasswordDialog` 关闭并清除 `entry` 文本；口令不写日志（含长度）、不进剪贴板（不调用 `clipboard().set_text()`）、不落盘。
 
 **Steps（TDD）:**
-1. [ ] 写 `fn test_password_zeroized_after_submit()`（失败）：构造 `Password::new(b"hunter2-secret")`，记录堆缓冲裸指针与长度（测试内 `unsafe`），走「提交」路径使其 `zeroize_now()` + `drop`，断言该缓冲已被清零；再断言日志记录器（`diagnostics`）中不含口令字节的十六进制或原文、也不含长度字段。
-2. [ ] 写模板结构测试 `fn test_ui_templates_declare_required_children()`（无头、跨平台）：用轻量 XML 解析（dev-dependency，如 `quick-xml`）读取 `src/ui/*.ui`，断言主窗口 `object` id 集合 ⊇ `{device_card, status_label, action_unlock, progress, result_label}`、对话框 ⊇ `{entry, submit}`；并断言 `.ui` 中不含中文/英文可显示字面量（仅允许 `id`/`class`/属性名与 `translatable` 元数据）。
-3. [ ] 写 `fn test_main_window_instantiates_with_template()`：`gtk::init()` 失败时打印跳过原因并 `return`（K6），成功时构造 `MainWindow` 并断言五个 `template_child` 均已解析（任一 id 不匹配会 panic，正好覆盖 AC-010 的「五个模板子件存在」）。
-4. [ ] 实现 `.ui` 模板、`main_window.rs`、`password_dialog.rs`、`jobs.rs`；全部测试 + clippy 全绿。
-5. [ ] 提交：`git commit -S -m "feat: 实现主窗口与口令对话框模板、口令清零与工作线程投递"`。
+1. [x] 写 `fn test_password_zeroized_after_submit()`（失败）：构造 `Password::new(b"hunter2-secret")`，记录堆缓冲裸指针与长度（测试内 `unsafe`），走「提交」路径使其 `zeroize_now()` + `drop`，断言该缓冲已被清零；再断言日志记录器（`diagnostics`）中不含口令字节的十六进制或原文、也不含长度字段。
+2. [x] 写模板结构测试 `fn test_ui_templates_declare_required_children()`（无头、跨平台）：用轻量 XML 解析（dev-dependency，如 `quick-xml`）读取 `src/ui/*.ui`，断言主窗口 `object` id 集合 ⊇ `{device_card, status_label, action_unlock, progress, result_label}`、对话框 ⊇ `{entry, submit}`；并断言 `.ui` 中不含中文/英文可显示字面量（仅允许 `id`/`class`/属性名与 `translatable` 元数据）。
+3. [x] 写 `fn test_main_window_instantiates_with_template()`：`gtk::init()` 失败时打印跳过原因并 `return`（K6），成功时构造 `MainWindow` 并断言五个 `template_child` 均已解析（任一 id 不匹配会 panic，正好覆盖 AC-010 的「五个模板子件存在」）。
+4. [x] 实现 `.ui` 模板、`main_window.rs`、`password_dialog.rs`、`jobs.rs`；全部测试 + clippy 全绿。
+5. [x] 提交：`git commit -S -m "feat: 实现主窗口与口令对话框模板、口令清零与工作线程投递"`。
 
 **Acceptance:** `test_password_zeroized_after_submit` 可 grep 且通过；`cargo test -p t7-app` 在无 display 环境也通过（跳过路径有明确打印）；口令不回显、不落日志、不进剪贴板。
 
@@ -570,10 +570,10 @@ graph TD
 - macOS：入口禁用 + 呈现代码 `TransportUnavailable` 与 `issues/2026-09-14-macOS传输通道.md` 指针；不轮询、不重试。
 
 **Steps:**
-1. [ ] 先写测试（失败）：(a) `fn test_diagnostics_export_redacts_password()`：把含口令原文与十六进制形态的记录入环形缓冲（> 512 条验证上限与最旧淘汰），导出文本中两种形态均不出现；(b) `fn test_cancel_records_user_cancel()`：用假 transport 在中途置取消标志，断言后续命令未下发、EndSession 已尽力发送、结果标记为用户取消；(c) `fn test_macos_channel_disables_actions()`（跨平台可跑）：把「当前平台是否支持盘操作」做成可注入参数的纯判定（如 `pub fn platform_notice(capability: PlatformCapability) -> (Vec<(ActionId, bool)>, &'static str)`），测试用 `PlatformCapability::MacOsDescriptorOnly` 断言入口全禁用且呈现码为 `TransportUnavailable`。
-2. [ ] 运行确认 FAIL；实现装配与 `diagnostics.rs`；全部测试 + clippy + fmt 全绿。
-3. [ ] 冒烟运行（本机 macOS）：`nix develop --command cargo run -p t7-app`，确认窗口起得来、设备卡片显示 `04e8:61fc` 与描述符摘要、盘操作入口禁用并显示平台限制文案。（本机当前确有锁定态设备，见附录 B。）
-4. [ ] 提交：`git commit -S -m "feat: 装配主流程、取消语义与脱敏诊断导出"`。
+1. [x] 先写测试（失败）：(a) `fn test_diagnostics_export_redacts_password()`：把含口令原文与十六进制形态的记录入环形缓冲（> 512 条验证上限与最旧淘汰），导出文本中两种形态均不出现；(b) `fn test_cancel_records_user_cancel()`：用假 transport 在中途置取消标志，断言后续命令未下发、EndSession 已尽力发送、结果标记为用户取消；(c) `fn test_macos_channel_disables_actions()`（跨平台可跑）：把「当前平台是否支持盘操作」做成可注入参数的纯判定（如 `pub fn platform_notice(capability: PlatformCapability) -> (Vec<(ActionId, bool)>, &'static str)`），测试用 `PlatformCapability::MacOsDescriptorOnly` 断言入口全禁用且呈现码为 `TransportUnavailable`。
+2. [x] 运行确认 FAIL；实现装配与 `diagnostics.rs`；全部测试 + clippy + fmt 全绿。
+3. [x] 冒烟运行（本机 macOS）：`nix develop --command cargo run -p t7-app`，确认窗口起得来、设备卡片显示 `04e8:61fc` 与描述符摘要、盘操作入口禁用并显示平台限制文案。（本机当前确有锁定态设备，见附录 B。）
+4. [x] 提交：`git commit -S -m "feat: 装配主流程、取消语义与脱敏诊断导出"`。
 
 **Acceptance:** 三条测试通过；macOS 冒烟可见正确设备与平台限制文案；无任何自动重试/轮询路径（macOS 分支）。
 
