@@ -163,7 +163,7 @@ mod imp {
         pub sidebar_toggle: gtk::ToggleButton,
         pub action_preferences: gtk::Button,
         pub window_title: adw::WindowTitle,
-        pub sidebar_title: adw::WindowTitle,
+        pub sidebar_title: gtk::Label,
         pub split_view: adw::OverlaySplitView,
         pub nav_list: gtk::ListBox,
         pub nav_labels: Vec<gtk::Label>,
@@ -227,7 +227,9 @@ mod imp {
 
             // —— 侧边栏：原生 flat HeaderBar 品牌（关闭标题按钮绘制——macOS 下
             // 避免与主标题栏重复渲染窗口控制圆点；尺寸由 libadwaita 统一）——
-            let sidebar_title = adw::WindowTitle::new("", "");
+            // 品牌标签：比导航项明显大一号（title-2），置于原生 flat 标题栏内。
+            let sidebar_title = gtk::Label::new(None);
+            sidebar_title.add_css_class("title-2");
             let sidebar_header = adw::HeaderBar::new();
             sidebar_header.add_css_class("flat");
             sidebar_header.set_show_start_title_buttons(false);
@@ -541,7 +543,7 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_title(&t!("app.title"));
+        imp.sidebar_title.set_label(&t!("app.title"));
         imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
@@ -1140,7 +1142,7 @@ impl MainWindow {
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_title(&t!("app.title"));
+        imp.sidebar_title.set_label(&t!("app.title"));
         imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
