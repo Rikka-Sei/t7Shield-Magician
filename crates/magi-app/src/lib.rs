@@ -43,19 +43,22 @@ pub mod settings_dialog;
 #[cfg(test)]
 mod test_support;
 
-use gtk::gio::prelude::ApplicationExtManual;
+use gtk::gio::prelude::{ApplicationExt, ApplicationExtManual};
 use gtk4 as gtk;
 use libadwaita as adw;
 
 /// 应用 ID（非用户可见文案）。
 pub const APP_ID: &str = "dev.rikki.MagiShield";
 
-/// 启动应用（D28）：装载设置 → 解析界面语言 → 应用主题 → 运行 `adw::Application`。
+/// 启动应用（D28）：装载设置 → 解析界面语言 → 运行 `adw::Application`，GTK 就绪后应用主题。
 pub fn run() -> gtk::glib::ExitCode {
     let settings = settings::Settings::load();
     rust_i18n::set_locale(settings.resolve_locale(current_env_tag().as_deref()));
     let app = adw::Application::builder().application_id(APP_ID).build();
-    settings.apply_theme();
+    // 主题应用须在 GTK/libadwaita 初始化之后：`build()` 只构造应用对象，`adw_init` 发生在
+    // 启动路径上。startup 信号（RUN_FIRST，默认处理器先跑 adw_init）早于任何窗口呈现，
+    // 在此设置 AdwStyleManager，先于 activate 建窗、首帧即按所选主题渲染。
+    app.connect_startup(move |_| settings.apply_theme());
     main_window::MainWindow::install(&app);
     app.run()
 }
