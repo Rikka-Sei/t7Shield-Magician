@@ -137,11 +137,6 @@ impl Settings {
         }
     }
 
-    /// 应用主题到全局样式管理器（须 GTK 已初始化；测试不调）。
-    pub fn apply_theme(&self) {
-        adw::StyleManager::default().set_color_scheme(self.color_scheme());
-    }
-
     /// 语言优先级（D28）：应用内显式选择 > 环境变量 > 默认 zh-CN。
     pub fn resolve_locale(&self, env_tag: Option<&str>) -> &'static str {
         match self.language {

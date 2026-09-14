@@ -9,9 +9,11 @@ nav:
 dashboard:
   title: "Overview"
   actions_title: "Actions"
-  feedback_title: "Progress and result"
+  feedback_title: "Progress & Result"
 about:
-  version: "Version %{version}"
+  version_title: "Version"
+  device_title: "Supported device"
+  repository_title: "Protocol reference"
   repository: "Protocol reference: t7Shield-protocol repository"
   notice: "This tool only unlocks the drive and checks your password. Firmware updates, secure erase, benchmarking, and other maintenance features are not supported."
 
@@ -64,7 +66,6 @@ reason:
   unrecognized: "No T7 Shield detected, so this action is unavailable"
   retries_exhausted: "The password was rejected 3 times, please reopen the password dialog to try again"
 progress:
-  idle: "Ready"
   StartTransaction: "Applying unlock settings"
   SetMbrDone: "Revealing the data partition"
   SetReadLocked: "Clearing the read lock"

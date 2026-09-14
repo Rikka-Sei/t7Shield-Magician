@@ -1,13 +1,17 @@
-//! §4.12 口令对话框（`CompositeTemplate`）：输入不回显、提交校验与口令生命周期。
+//! §4.12 口令对话框（D29：界面由 Rust 代码构建，使用 libadwaita 原生组件）。
 //!
 //! 口令纪律（§6）：口令经 [`magi_protocol::Password`]（`Zeroizing<Vec<u8>>`）承载，不进 `String`
 //! 持有的长生命周期结构；提交后立即取走并清空输入框副本；报文构造完成后由协议层 `zeroize`，
 //! 结构体 `Drop` 再清零一次；不写日志（含长度）、不进剪贴板、不落盘。
+//!
+//! 零回显（§4.12/§6）：`GtkPasswordEntry` 的类型固有行为即输入恒被遮蔽，代码不设置任何可见性
+//! 属性，并关闭「显示明文」图标（`show-peek-icon = false`），对话框中不存在任何回显通路。
 
+use std::cell::Cell;
+
+use adw::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::CompositeTemplate;
 use gtk4 as gtk;
 use libadwaita as adw;
 use magi_protocol::Password;
@@ -19,23 +23,81 @@ use crate::presentation::AppError;
 mod imp {
     use super::*;
 
-    #[derive(CompositeTemplate, Default)]
-    #[template(file = "ui/password_dialog.ui")]
+    /// 口令对话框子件（D29：全部在 Rust 侧构建）。
     pub struct PasswordDialog {
-        #[template_child]
-        pub entry: TemplateChild<gtk::PasswordEntry>,
-        #[template_child]
-        pub submit: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub cancel: TemplateChild<gtk::Button>,
-        #[template_child]
-        pub dialog_title: TemplateChild<adw::WindowTitle>,
-        #[template_child]
-        pub body_label: TemplateChild<gtk::Label>,
-        #[template_child]
-        pub error_label: TemplateChild<gtk::Label>,
-        /// 对话框承载的操作（relocalize 按它重取标题键）。
-        pub(crate) action: std::cell::Cell<ActionId>,
+        pub toolbar: adw::ToolbarView,
+        pub dialog_title: adw::WindowTitle,
+        pub body_label: gtk::Label,
+        pub entry: gtk::PasswordEntry,
+        pub error_label: gtk::Label,
+        pub submit: gtk::Button,
+        pub cancel: gtk::Button,
+        pub action: Cell<ActionId>,
+    }
+
+    impl Default for PasswordDialog {
+        fn default() -> Self {
+            // 文案装配在 `PasswordDialog::new(action)` 中完成（本函数只负责结构与默认态）。
+            let dialog_title = adw::WindowTitle::new("", "");
+            let header = adw::HeaderBar::new();
+            header.set_title_widget(Some(&dialog_title));
+
+            let icon = gtk::Image::from_icon_name("dialog-password-symbolic");
+            icon.set_pixel_size(32);
+            icon.set_valign(gtk::Align::Start);
+            icon.add_css_class("dim-label");
+
+            let body_label = gtk::Label::builder()
+                .xalign(0.0)
+                .hexpand(true)
+                .wrap(true)
+                .build();
+            body_label.add_css_class("dim-label");
+            let body_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            body_box.append(&icon);
+            body_box.append(&body_label);
+
+            let entry = gtk::PasswordEntry::builder()
+                .show_peek_icon(false)
+                .activates_default(true)
+                .hexpand(true)
+                .build();
+
+            let error_label = gtk::Label::builder().xalign(0.0).wrap(true).build();
+
+            let submit = gtk::Button::new();
+            submit.add_css_class("suggested-action");
+            let cancel = gtk::Button::new();
+            let button_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            button_box.set_halign(gtk::Align::End);
+            button_box.append(&cancel);
+            button_box.append(&submit);
+
+            let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+            content.set_margin_top(18);
+            content.set_margin_bottom(18);
+            content.set_margin_start(18);
+            content.set_margin_end(18);
+            content.append(&body_box);
+            content.append(&entry);
+            content.append(&error_label);
+            content.append(&button_box);
+
+            let toolbar = adw::ToolbarView::new();
+            toolbar.add_top_bar(&header);
+            toolbar.set_content(Some(&content));
+
+            Self {
+                toolbar,
+                dialog_title,
+                body_label,
+                entry,
+                error_label,
+                submit,
+                cancel,
+                action: Cell::new(ActionId::Unlock),
+            }
+        }
     }
 
     #[glib::object_subclass]
@@ -43,18 +105,18 @@ mod imp {
         const NAME: &'static str = "T7PasswordDialog";
         type Type = super::PasswordDialog;
         type ParentType = adw::Dialog;
+    }
 
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            // 实例化模板：模板子件在此绑定（未绑定会在 `check_template_children` 处报错）。
-            obj.init_template();
+    impl ObjectImpl for PasswordDialog {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let obj = self.obj();
+            obj.set_content_width(400);
+            obj.set_follows_content_size(true);
+            obj.set_child(Some(&self.toolbar));
         }
     }
 
-    impl ObjectImpl for PasswordDialog {}
     impl WidgetImpl for PasswordDialog {}
     impl adw::subclass::prelude::AdwDialogImpl for PasswordDialog {}
 }
@@ -76,26 +138,31 @@ impl PasswordDialog {
     /// 构造对话框：`action` 决定标题与说明文案（解锁 / 校验口令共用同一对话框）。
     pub fn new(action: ActionId) -> Self {
         let dialog: Self = glib::Object::new();
-        let imp = dialog.imp();
-        imp.action.set(action);
-        imp.dialog_title.set_title(&t!(action.label_key()));
-        imp.body_label.set_label(&t!("password.body"));
-        imp.error_label.set_label("");
-        imp.submit.set_label(&t!("password.submit"));
-        imp.cancel.set_label(&t!("password.cancel"));
-        imp.entry
-            .set_placeholder_text(Some(&t!("password.placeholder")));
+        dialog.imp().action.set(action);
+        dialog.relocalize();
+        dialog.imp().error_label.set_label("");
         dialog
     }
 
     /// 主按钮（返回输入框焦点前的最终动作由调用方接线）。
     pub fn submit_button(&self) -> gtk::Button {
-        self.imp().submit.get()
+        self.imp().submit.clone()
     }
 
     /// 取消按钮。
     pub fn cancel_button(&self) -> gtk::Button {
-        self.imp().cancel.get()
+        self.imp().cancel.clone()
+    }
+
+    /// 语言切换后重设对话框文案（D28）：标题/说明/按钮/占位符全部重取。
+    pub fn relocalize(&self) {
+        let imp = self.imp();
+        imp.dialog_title.set_title(&t!(imp.action.get().label_key()));
+        imp.body_label.set_label(&t!("password.body"));
+        imp.submit.set_label(&t!("password.submit"));
+        imp.cancel.set_label(&t!("password.cancel"));
+        imp.entry
+            .set_placeholder_text(Some(&t!("password.placeholder")));
     }
 
     /// §4.12：取走口令输入 —— 空/全空白 → [`AppError::EmptyPassword`]（就地提示，保持打开、
@@ -116,27 +183,16 @@ impl PasswordDialog {
             crate::presentation::presentation_code(error),
             t!(crate::presentation::reason_key(error)),
         );
-        self.imp().error_label.set_label(&text);
+        let error_label = &self.imp().error_label;
+        error_label.set_label(&text);
+        error_label.add_css_class("error");
         self.imp().entry.grab_focus();
-        self.imp().error_label.add_css_class("error");
     }
 
     /// 清空输入框（重新打开对话框时调用：不残留上一次输入）。
     pub fn reset(&self) {
         self.imp().entry.set_text("");
         self.imp().error_label.set_label("");
-    }
-
-    /// 语言切换后重设对话框文案（D28）：标题/说明/按钮/占位符全部重取（与构造同构）。
-    pub fn relocalize(&self) {
-        let imp = self.imp();
-        imp.dialog_title
-            .set_title(&t!(imp.action.get().label_key()));
-        imp.body_label.set_label(&t!("password.body"));
-        imp.submit.set_label(&t!("password.submit"));
-        imp.cancel.set_label(&t!("password.cancel"));
-        imp.entry
-            .set_placeholder_text(Some(&t!("password.placeholder")));
     }
 }
 
@@ -234,20 +290,20 @@ mod tests {
         );
     }
 
-    /// 模板装载（K6）：`gtk::init()` 失败时打印跳过原因并返回，不 `#[ignore]`。
+    /// 对话框装配（K6）：`gtk::init()` 失败时打印跳过原因并返回，不 `#[ignore]`。
     #[test]
-    fn test_password_dialog_instantiates_with_template() {
-        if !crate::test_support::gtk_ready("test_password_dialog_instantiates_with_template") {
+    fn test_password_dialog_instantiates() {
+        if !crate::test_support::gtk_ready("test_password_dialog_instantiates") {
             return;
         }
         let dialog = PasswordDialog::new(ActionId::ValidatePassword);
         let imp = dialog.imp();
-        assert_eq!(imp.entry.get().type_().name(), "GtkPasswordEntry");
-        assert_eq!(imp.submit.get().type_().name(), "GtkButton");
+        assert_eq!(imp.entry.type_().name(), "GtkPasswordEntry");
+        assert_eq!(imp.submit.type_().name(), "GtkButton");
         // 输入不回显（§4.12）：`GtkPasswordEntry` 没有 `visibility` 属性、输入恒被遮蔽；
         // 本对话框还要关闭「显示明文」图标，使界面里不存在回显通路（§6）。
-        assert!(!imp.entry.get().property::<bool>("show-peek-icon"));
-        assert!(imp.entry.get().property::<bool>("activates-default"));
+        assert!(!imp.entry.property::<bool>("show-peek-icon"));
+        assert!(imp.entry.property::<bool>("activates-default"));
 
         // 空口令提交：就地提示、不产生口令缓冲。
         imp.entry.set_text("");
@@ -256,7 +312,7 @@ mod tests {
             AppError::EmptyPassword
         );
         assert_eq!(
-            imp.error_label.get().label(),
+            imp.error_label.label(),
             format!(
                 "{}：{}",
                 crate::presentation::CODE_EMPTY_PASSWORD,
@@ -268,7 +324,7 @@ mod tests {
         imp.entry.set_text("hunter2");
         let password = dialog.take_password().expect("非空口令必须被接受");
         assert_eq!(password.expose(), b"hunter2");
-        assert_eq!(imp.entry.get().text(), "");
+        assert_eq!(imp.entry.text(), "");
     }
 
     fn hex(bytes: &[u8]) -> String {

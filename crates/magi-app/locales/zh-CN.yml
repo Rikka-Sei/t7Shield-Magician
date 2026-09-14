@@ -10,7 +10,9 @@ dashboard:
   actions_title: "操作"
   feedback_title: "进度与结果"
 about:
-  version: "版本 %{version}"
+  version_title: "版本"
+  device_title: "支持设备"
+  repository_title: "协议参考"
   repository: "协议参考：t7Shield-protocol 仓库"
   notice: "本工具只提供解锁与密码验证两项功能，不支持固件更新、安全擦除、性能测试等其他操作。"
 
@@ -63,7 +65,6 @@ reason:
   unrecognized: "未发现 T7 Shield，无法操作"
   retries_exhausted: "密码已被拒绝 3 次，请重新打开密码输入窗口后再试"
 progress:
-  idle: "就绪"
   StartTransaction: "开始应用解锁设置"
   SetMbrDone: "显示真实数据分区"
   SetReadLocked: "解除读取锁定"

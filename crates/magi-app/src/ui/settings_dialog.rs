@@ -1,35 +1,57 @@
-//! D28 设置对话框（`CompositeTemplate`）：主题/语言三态选择，更改即时生效并持久化。
+//! D28 设置对话框（D29：界面由 Rust 代码构建，使用 libadwaita 原生组件）。
 //!
-//! 候选项文案经 `gtk::StringList` + `t!()` 在 Rust 侧构造（`.ui` 零字面量，K5）；
-//! 语言切换后对话框自身与主窗口同步重渲染（relocalize）。
+//! 主题与语言两组三态选择（`AdwComboRow`），更改即时生效并持久化：
+//! - 主题 → [`crate::ui::apply_theme`]（`AdwStyleManager`）；
+//! - 语言 → `rust_i18n::set_locale` + 对话框自身与主窗口 `relocalize()`。
+//!
+//! 候选项文案经 `gtk::StringList` + `t!()` 在本模块构造（AC-015：不内联可显示字符串）。
+
+use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
 use gtk::glib;
 use gtk::subclass::prelude::*;
-use gtk::CompositeTemplate;
 use gtk4 as gtk;
 use libadwaita as adw;
 use rust_i18n::t;
 
-use crate::main_window::MainWindow;
 use crate::settings::{LanguagePreference, Settings, ThemePreference};
+use crate::ui::MainWindow;
 
 mod imp {
     use super::*;
 
-    #[derive(CompositeTemplate, Default)]
-    #[template(file = "ui/settings_dialog.ui")]
+    /// 设置对话框子件（D29：全部在 Rust 侧构建）。
     pub struct SettingsDialog {
-        #[template_child]
-        pub appearance_group: TemplateChild<adw::PreferencesGroup>,
-        #[template_child]
-        pub theme_row: TemplateChild<adw::ComboRow>,
-        #[template_child]
-        pub language_row: TemplateChild<adw::ComboRow>,
-        pub(crate) settings: std::cell::RefCell<Settings>,
-        pub(crate) window: std::cell::RefCell<Option<glib::WeakRef<MainWindow>>>,
+        pub page: adw::PreferencesPage,
+        pub appearance_group: adw::PreferencesGroup,
+        pub theme_row: adw::ComboRow,
+        pub language_row: adw::ComboRow,
+        pub(crate) settings: RefCell<Settings>,
+        pub(crate) window: RefCell<Option<glib::WeakRef<MainWindow>>>,
         /// 装配期间屏蔽 notify::selected 回调（初始 selected 写入不应触发持久化）。
-        pub(crate) loading: std::cell::Cell<bool>,
+        pub(crate) loading: Cell<bool>,
+    }
+
+    impl Default for SettingsDialog {
+        fn default() -> Self {
+            let theme_row = adw::ComboRow::new();
+            let language_row = adw::ComboRow::new();
+            let appearance_group = adw::PreferencesGroup::new();
+            appearance_group.add(&theme_row);
+            appearance_group.add(&language_row);
+            let page = adw::PreferencesPage::new();
+            page.add(&appearance_group);
+            Self {
+                page,
+                appearance_group,
+                theme_row,
+                language_row,
+                settings: RefCell::new(Settings::default()),
+                window: RefCell::new(None),
+                loading: Cell::new(false),
+            }
+        }
     }
 
     #[glib::object_subclass]
@@ -37,17 +59,18 @@ mod imp {
         const NAME: &'static str = "MagiSettingsDialog";
         type Type = super::SettingsDialog;
         type ParentType = adw::PreferencesDialog;
+    }
 
-        fn class_init(klass: &mut Self::Class) {
-            klass.bind_template();
-        }
-
-        fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
-            obj.init_template();
+    impl ObjectImpl for SettingsDialog {
+        fn constructed(&self) {
+            self.parent_constructed();
+            let obj = self.obj();
+            obj.set_content_width(420);
+            obj.set_content_height(360);
+            obj.add(&self.page);
         }
     }
 
-    impl ObjectImpl for SettingsDialog {}
     impl WidgetImpl for SettingsDialog {}
     impl adw::subclass::prelude::AdwDialogImpl for SettingsDialog {}
     impl adw::subclass::prelude::PreferencesDialogImpl for SettingsDialog {}
@@ -169,7 +192,7 @@ impl SettingsDialog {
             }
             let mut settings = imp.settings.borrow_mut();
             settings.theme = theme_from_index(row.selected());
-            settings.apply_theme();
+            crate::ui::apply_theme(&settings);
             settings.save();
         });
         let dialog = self.clone();

@@ -9,6 +9,9 @@
 //! 形态说明：本 crate 是库 + 极薄可执行入口（`src/main.rs`）。界面与编排放在库里，才能让
 //! 入口启用矩阵、单飞约束、口令清零等口径在无 display 环境下被 `cargo test -p magi-app` 覆盖
 //! （K6）；`main.rs` 只负责把控制权交给 [`run`]。
+//!
+//! UI 分层（D29）：界面代码集中在 [`ui`] 子模块（一个窗口 / 对话框一个文件，全部由 Rust 代码
+//! 构建 libadwaita 原生组件）；状态机、作业、诊断、呈现码与设置持久化留在 crate 根模块。
 
 // §6 国际化：编译期内嵌 locales/*.yml，默认 zh-CN、提供 en。
 rust_i18n::i18n!("locales", fallback = "zh-CN");
@@ -22,14 +25,8 @@ pub mod diagnostics;
 /// 工作线程 + channel + `AppEvent` 投递（`spawn_device_job`）。
 pub mod jobs;
 
-/// 主窗口（`CompositeTemplate`：设备卡片、状态、操作入口、进度与结果）。
-pub mod main_window;
-
 /// 重枚举观察采样 → `ReEnumerationObservation` 的纯映射与轮询驱动。
 pub mod observation;
-
-/// 口令对话框（`CompositeTemplate`）+ 提交校验与口令生命周期。
-pub mod password_dialog;
 
 /// `AppError` → 呈现码映射与文案键（§4.13 表）。
 pub mod presentation;
@@ -37,8 +34,8 @@ pub mod presentation;
 /// D28 应用内设置：主题/语言三态、KeyFile 持久化与运行时应用。
 pub mod settings;
 
-/// D28 设置对话框（`CompositeTemplate`）。
-pub mod settings_dialog;
+/// UI 子模块（D29）：主窗口、口令对话框与设置对话框；界面全部由 Rust 代码构建。
+pub mod ui;
 
 #[cfg(test)]
 mod test_support;
@@ -58,8 +55,8 @@ pub fn run() -> gtk::glib::ExitCode {
     // 主题应用须在 GTK/libadwaita 初始化之后：`build()` 只构造应用对象，`adw_init` 发生在
     // 启动路径上。startup 信号（RUN_FIRST，默认处理器先跑 adw_init）早于任何窗口呈现，
     // 在此设置 AdwStyleManager，先于 activate 建窗、首帧即按所选主题渲染。
-    app.connect_startup(move |_| settings.apply_theme());
-    main_window::MainWindow::install(&app);
+    app.connect_startup(move |_| ui::apply_theme(&settings));
+    ui::MainWindow::install(&app);
     app.run()
 }
 
