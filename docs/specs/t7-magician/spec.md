@@ -688,7 +688,7 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 | 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.7 的判据结论 |
 | 诊断页 | 诊断记录只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
 | 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；代码不设可见性属性；`show-peek-icon = false` |
-| 关于页 | 版本与协议仓库引用 | 两个字段齐备 |
+| 关于页 | 版本 / 适用设备 / 协议参考 / 运行环境（平台通道） | 字段齐备，取值与 §4.1/§5 一致 |
 | HeaderBar | 首选项入口 | 任一页面可触达；点击打开设置对话框 |
 | 设置对话框 | 主题三态、语言三态 | 默认深色主题；默认语言跟随系统；更改立即生效并持久化 |
 
@@ -704,6 +704,7 @@ pub const APP_DISPLAY_NAME_KEY: &str = "app.display-name";
 pub struct MainWindow(ObjectSubclass<imp::MainWindow>) @extends adw::ApplicationWindow …;
 
 impl MainWindow {
+    //（以下访问器为示意；实现为 imp 结构体字段，经 window.imp() 取用）
     /// 侧边栏导航容器：`GtkListBox` 挂内置 `.navigation-sidebar` 类，导航项 >= 3。
     fn nav_list(&self) -> gtk::ListBox;
     /// 页面栈：仪表盘 / 诊断 / 关于（页名与 `NavItem::page_name()` 一致）。
@@ -713,7 +714,7 @@ impl MainWindow {
     /// 设备行：锁定状态徽章以 `AdwActionRow` 尾部承载（与 `DeviceState` 一一对应）。
     fn device_row(&self) -> adw::ActionRow;
     /// 操作分组：五个 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令）。
-    fn action_row(&self, action: ActionId) -> adw::ButtonRow;
+    fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow>;
     /// 首选项入口（HeaderBar 末端按钮）。
     fn action_preferences(&self) -> gtk::Button;
     /// 进度与结果反馈：进度条（`UnlockStep` 驱动）与结果行。
@@ -722,7 +723,7 @@ impl MainWindow {
 }
 
 // 诊断页（页面栈页）：只读记录（`GtkTextView` 卡片）与脱敏导出入口（`AdwButtonRow`）。
-// 关于页（页面栈页）：版本 / 支持设备 / 协议参考三行（`AdwActionRow`）。
+// 关于页（页面栈页）：版本 / 适用设备 / 协议参考 / 运行环境四行（`AdwActionRow`）。
 
 /// 口令对话框（代码构建）：输入恒不回显，`show-peek-icon = false`。
 pub struct PasswordDialog(ObjectSubclass<imp::PasswordDialog>) @extends adw::Dialog …;
@@ -939,7 +940,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D23 | 接口承载：§4.6 的五个 payload 函数显式接收 `base_comid: u16`、`&SessionIds` 与 `StatusListForm`；`SessionIds` 只承载 TSN/HSN，不得含 ComID；状态列表形态参数化 | §4.6、§4.9 | 五个函数签名均含 `base_comid` 与 `form`；正文声明 `SessionIds` 不含 ComID |
 | D24 | 命名体系：crate 前缀 `t7-` 改为 `magi-`（`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`），主程序二进制名 `magi`，应用显示名 `MagiShield`，应用 ID `dev.rikki.MagiShield`（显示名与 ID 为暂定值，调整时按变更流程更新）；spec 目录名本轮不改 | §3.1、§4.11、§5、§10 | 旧 crate 前缀与旧标识符零命中（由 manifest 的 D24 禁止规则校验）；manifest 的 globs 与屏障命令指向 `magi-*`；§4.11 出现 `MagiShield` 与 APP_ID |
 | D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（仪表盘 / 诊断 / 关于，当前项有选中态）+ 仪表盘区（设备卡、锁定状态徽章、操作区、进度与结果反馈）+ 诊断页（环形缓冲只读列表、脱敏导出）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.11、§8 | 布局契约表与六条验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
-| D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，模板只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.11、§6、§7、§8 | §4.11 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
+| D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，代码只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.11、§6、§7、§8 | §4.11 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
 | D27 | 运行目标平台收敛为仅 Linux：移除 macOS 平台目标及其全部产品行为（原「macOS 平台行为契约」需求整节、USB/IOKit 描述符侦察通道、平台降级 UI 与 macOS 专属呈现分支）；`TransportError::Unavailable` 变体保留给非 Linux 平台的 `open` 路径，非 Linux 平台的运行时行为不进 spec 管辖；macOS 传输通道调查记录（`issues/2026-09-14-macOS传输通道.md`）改为 wontfix，`prototype/macos-scsi-dext/` 随之移除 | §1、§3.1、§4、§5、§6、§7、§8 | 正文除 §1.1 背景事实与 §1.3 非目标外零 macOS 表述（由 manifest 的 D27 禁止规则校验）；锚点 `test_macos_transport_unavailable` 删除；实现中不存在 macOS 平台通路相关代码路径（AC-013） |
 | D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染全部静态文案）；侧边栏导航仍为三类页面不变 | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
 | D29 | 界面构建与组件标准化：界面全部由 Rust 代码构建（无 `.ui` 模板、无 `CompositeTemplate`）；全部采用 libadwaita 原生组件与标准页面模式——页面为 `AdwPreferencesPage`，分组为 `AdwPreferencesGroup`，设备信息为 `AdwActionRow`（状态徽章置于行尾），操作入口为 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令），侧边栏导航为挂内置 `.navigation-sidebar` 类的 `GtkListBox`，设置对话框为 `AdwPreferencesDialog` + `AdwComboRow` | §4.11、§9 | §4.11 出现 `AdwPreferencesPage` 与 `AdwButtonRow`；`app-code-built-ui` 契约命中 |
@@ -985,4 +986,4 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | 协议层黄金向量 | `crates/magi-protocol` 存在 | 帧构造与解析测试全部通过，黄金向量与 §4 一致 | `python tools/barriers.py` 中协议层屏障 PASS |
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，非 Linux 平台 `open` 返回通道不可用 | 同上，传输层屏障 PASS |
 
-**当前状态（Authoritative）**：切换判据已满足——`crates/magi-protocol`（57 测试）、`crates/magi-transport`（26 测试）、`crates/magi-app`（45 测试）三个 crate 全部落地，上表 24 个测试锚点与全部代码契约在代码中可 grep 命中。2026-09-14 于 nix devShell 内实跑验证三件套（D27 生效后复跑；D28 设置锚点扩充后复验）：`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。本文件自此为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。
+**当前状态（Authoritative）**：切换判据已满足——`crates/magi-protocol`（57 测试）、`crates/magi-transport`（26 测试）、`crates/magi-app`（44 测试）三个 crate 全部落地，上表 24 个测试锚点与全部代码契约在代码中可 grep 命中。2026-09-14 于 nix devShell 内实跑验证三件套（D27 生效后复跑；D28 设置锚点扩充后复验）：`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。本文件自此为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。

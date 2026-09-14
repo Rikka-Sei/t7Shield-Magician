@@ -1,12 +1,12 @@
 # magi-app 默认语言资源（zh-CN）。键集合必须与 en.yml 完全一致（有测试断言）。
-# 约定：所有用户可见文案只在此处与 en.yml 出现，代码与 .ui 内不内联可显示字符串（AC-015）。
+# 约定：所有用户可见文案只在此处与 en.yml 出现，代码内不内联可显示字符串（AC-015）。
 nav:
   dashboard: "概览"
   diagnostics: "诊断"
   about: "关于"
   toggle_sidebar: "切换侧边栏"
+
 dashboard:
-  title: "概览"
   actions_title: "操作"
   feedback_title: "进度与结果"
 about:

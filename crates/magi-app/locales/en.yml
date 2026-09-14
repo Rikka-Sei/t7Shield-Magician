@@ -1,13 +1,13 @@
 # magi-app English resource. The key set must stay identical to zh-CN.yml (asserted by a test).
-# Convention: user-visible text lives only here and in zh-CN.yml; code and .ui files carry no
+# Convention: user-visible text lives only here and in zh-CN.yml; code carries no
 # inline displayable strings (AC-015).
 nav:
   dashboard: "Overview"
   diagnostics: "Diagnostics"
   about: "About"
   toggle_sidebar: "Toggle sidebar"
+
 dashboard:
-  title: "Overview"
   actions_title: "Actions"
   feedback_title: "Progress & Result"
 about:
