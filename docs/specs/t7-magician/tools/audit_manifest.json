@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 12,
   "decision_prefix": "D",
-  "latest_decision": 28,
+  "latest_decision": 29,
   "decisions": [
     {
       "decision_id": "D01",
@@ -265,21 +265,21 @@
     {
       "decision_id": "D09",
       "required_terms": [
-        "CompositeTemplate"
+        "Rust 代码构建"
       ],
       "obsolete_terms": [],
       "scoped_terms": [],
       "whitelist": [],
       "required_occurrences": [
         {
-          "pattern": "CompositeTemplate",
+          "pattern": "Rust 代码构建",
           "count": {
             "min": 1
           },
           "sections": [
             "4"
           ],
-          "reason": "UI 技术栈必须以 composite template 形式写入契约"
+          "reason": "界面构建方式必须写明为 Rust 代码构建（D29）"
         }
       ],
       "forbidden_occurrences": []
@@ -1061,6 +1061,46 @@
         }
       ],
       "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D29",
+      "required_terms": [],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D29",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D29 条目"
+        },
+        {
+          "pattern": "AdwPreferencesPage",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "标准页面组件必须写入 §4.11 契约"
+        },
+        {
+          "pattern": "AdwButtonRow",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "操作入口的标准组件必须写入 §4.11 契约"
+        }
+      ],
+      "forbidden_occurrences": []
     }
   ],
   "code_contracts": [
@@ -1096,15 +1136,15 @@
       "reason": "ComID 必须作为 discovery 解析结果传递，而非常量（D03）"
     },
     {
-      "id": "app-composite-template",
-      "pattern": "CompositeTemplate",
+      "id": "app-code-built-ui",
+      "pattern": "adw::PreferencesPage",
       "count": {
-        "min": 1
+        "min": 3
       },
       "source_globs": [
         "crates/magi-app/src/**/*.rs"
       ],
-      "reason": "UI 必须使用 composite template（D09）"
+      "reason": "界面由 Rust 代码构建且三个页面均为 AdwPreferencesPage（D29）"
     },
     {
       "id": "password-zeroize",
@@ -1294,11 +1334,12 @@
       "required": true
     },
     {
-      "name": "test_settings_dialog_instantiates_with_template",
+      "name": "test_settings_dialog_instantiates",
       "source_globs": [
         "crates/magi-app/**/*.rs"
       ],
-      "required": true
+      "required": true,
+      "reason": "设置对话框实例化与两个三态行的默认选中态（D28）"
     }
   ],
   "barriers": [

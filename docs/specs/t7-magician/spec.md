@@ -1,7 +1,7 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
 **状态:** Authoritative（唯一权威）
-**版本:** 0.1（决策基线：D01–D28）
+**版本:** 0.1（决策基线：D01–D29）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端（运行目标平台为仅 Linux）的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与 Linux 传输行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -85,7 +85,7 @@
 ```mermaid
 graph LR
     subgraph app["crates/magi-app（GTK4 + libadwaita）"]
-        UI["应用外壳：侧边栏导航（仪表盘/诊断/关于）<br/>GtkBuilder .ui + CompositeTemplate"]
+        UI["应用外壳：侧边栏导航（仪表盘/诊断/关于）<br/>Rust 代码构建 libadwaita 界面（D29）"]
         CTL["操作控制器<br/>单飞 + 工作线程 + channel 回主线程"]
         I18N["i18n 资源<br/>zh-CN（默认）/ en"]
     end
@@ -658,14 +658,14 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 
 > **作为** 用户，**我希望** 在一个窗口里看到设备状态与操作入口，并能切到诊断与关于页，**以便** 不必理解协议细节。
 > **优先级:** P0
-> **归因:** D09、D10、D24、D25、D28
+> **归因:** D09、D10、D24、D25、D28、D29
 > **验收标准:**
 > - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为三类页面（仪表盘、诊断、关于），导航项数量 ≥ 3，且当前项有选中态（任一时刻选中项唯一）。
-> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备卡（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作区（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
+> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备分组（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作分组（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
 > - Given 位于诊断页；When 查看内容；Then 呈现诊断记录的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤与字节形态纵深过滤。
 > - Given 位于关于页；When 查看内容；Then 呈现应用版本与 t7Shield-protocol 协议仓库引用。
-> - Given 任一界面定义；When 渲染；Then 使用 GtkBuilder `.ui` 文件与 `#[derive(CompositeTemplate)]` 绑定；`.ui` 文件不含文案字面量（可显示文案只写 i18n 键）。
-> - Given 口令对话框打开；When 输入口令；Then 输入恒不回显（`GtkPasswordEntry` 的类型固有行为，模板不设置任何可见性属性）、明文切换图标关闭（模板设 `show-peek-icon = false`）；提交后口令缓冲立即 zeroize；口令不进入诊断记录、剪贴板与任何持久化存储。
+> - Given 任一界面定义；When 渲染；Then 界面全部由 Rust 代码构建（不使用 `.ui` 模板）；可显示文案一律经 i18n 键渲染，Rust 代码中不内联可显示字符串。
+> - Given 口令对话框打开；When 输入口令；Then 输入恒不回显（`GtkPasswordEntry` 的类型固有行为，代码不设置任何可见性属性）、明文切换图标关闭（`show-peek-icon = false`）；提交后口令缓冲立即 zeroize；口令不进入诊断记录、剪贴板与任何持久化存储。
 > - Given 任一页面；When 点击 HeaderBar 的首选项入口；Then 打开设置对话框，呈现主题（跟随系统/浅色/深色）与语言（跟随系统/中文/English）两组选择；更改立即生效并持久化，下次启动保持。
 
 应用身份契约（显示名与 APP_ID 为暂定值，调整时按 §9 变更流程更新本表与 D24）：
@@ -681,12 +681,13 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 | 区域 | 元素 | 可验证判据 |
 |---|---|---|
 | 侧边栏 | 导航项：仪表盘 / 诊断 / 关于 | 导航项数量 ≥ 3；当前项有选中态且唯一；侧边栏为深色外观 |
-| 主区 · 仪表盘 | 设备卡：产品名、VID/PID、设备节点或平台通道 | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
-| 主区 · 仪表盘 | 锁定状态徽章 | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
-| 主区 · 仪表盘 | 操作区：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
+| 主区 · 页面 | 每页一个 `AdwPreferencesPage`（仪表盘 / 诊断 / 关于） | 三个页名与导航项一一对应，页面栈中均可取到 |
+| 主区 · 仪表盘 | 设备分组（`AdwPreferencesGroup` + `AdwActionRow`）：产品名、VID/PID、设备节点或平台通道 | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
+| 主区 · 仪表盘 | 锁定状态徽章（ActionRow 尾部） | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
+| 主区 · 仪表盘 | 操作分组（`AdwButtonRow`）：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
 | 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.7 的判据结论 |
 | 诊断页 | 诊断记录只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
-| 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；模板设 `show-peek-icon = false`；模板不得出现可见性属性设置 |
+| 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；代码不设可见性属性；`show-peek-icon = false` |
 | 关于页 | 版本与协议仓库引用 | 两个字段齐备 |
 | HeaderBar | 首选项入口 | 任一页面可触达；点击打开设置对话框 |
 | 设置对话框 | 主题三态、语言三态 | 默认深色主题；默认语言跟随系统；更改立即生效并持久化 |
@@ -698,46 +699,45 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 pub const APP_ID: &str = "dev.rikki.MagiShield";
 pub const APP_DISPLAY_NAME_KEY: &str = "app.display-name";
 
-#[derive(CompositeTemplate, Default)]
-#[template(file = "ui/main_window.ui")]
-pub struct MainWindow {
-    #[template_child] pub sidebar: TemplateChild<gtk::ListBox>,        // 导航项 >= 3，当前项选中
-    #[template_child] pub nav_view: TemplateChild<adw::NavigationView>, // 仪表盘 / 诊断 / 关于
-    #[template_child] pub device_card: TemplateChild<adw::Bin>,
-    #[template_child] pub lock_badge: TemplateChild<gtk::Label>,        // 与 DeviceState 一一对应
-    #[template_child] pub action_unlock: TemplateChild<gtk::Button>,
-    #[template_child] pub action_validate: TemplateChild<gtk::Button>,
-    #[template_child] pub action_password_admin: TemplateChild<gtk::Button>, // 恒为禁用态
-    #[template_child] pub action_preferences: TemplateChild<gtk::Button>, // 首选项入口
-    #[template_child] pub progress: TemplateChild<gtk::ProgressBar>,
-    #[template_child] pub result_label: TemplateChild<gtk::Label>,
+/// 主窗口（D29）：界面全部由 Rust 代码构建——无 `.ui` 模板、无 `#[template_child]`；
+/// 文案一律经 i18n 键在装配时赋值。
+pub struct MainWindow(ObjectSubclass<imp::MainWindow>) @extends adw::ApplicationWindow …;
+
+impl MainWindow {
+    /// 侧边栏导航容器：`GtkListBox` 挂内置 `.navigation-sidebar` 类，导航项 >= 3。
+    fn nav_list(&self) -> gtk::ListBox;
+    /// 页面栈：仪表盘 / 诊断 / 关于（页名与 `NavItem::page_name()` 一致）。
+    fn content_stack(&self) -> gtk::Stack;
+    /// 仪表盘设备分组：设备行与设备信息行（`AdwPreferencesGroup` + `AdwActionRow`）。
+    fn device_group(&self) -> adw::PreferencesGroup;
+    /// 设备行：锁定状态徽章以 `AdwActionRow` 尾部承载（与 `DeviceState` 一一对应）。
+    fn device_row(&self) -> adw::ActionRow;
+    /// 操作分组：五个 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令）。
+    fn action_row(&self, action: ActionId) -> adw::ButtonRow;
+    /// 首选项入口（HeaderBar 末端按钮）。
+    fn action_preferences(&self) -> gtk::Button;
+    /// 进度与结果反馈：进度条（`UnlockStep` 驱动）与结果行。
+    fn progress(&self) -> gtk::ProgressBar;
+    fn result_label(&self) -> gtk::Label;
 }
 
-#[derive(CompositeTemplate, Default)]
-#[template(file = "ui/diagnostics_page.ui")]
-pub struct DiagnosticsPage {
-    #[template_child] pub log_list: TemplateChild<gtk::ListBox>,      // 只读
-    #[template_child] pub export_button: TemplateChild<gtk::Button>,  // 脱敏导出
+// 诊断页（页面栈页）：只读记录（`GtkTextView` 卡片）与脱敏导出入口（`AdwButtonRow`）。
+// 关于页（页面栈页）：版本 / 支持设备 / 协议参考三行（`AdwActionRow`）。
+
+/// 口令对话框（代码构建）：输入恒不回显，`show-peek-icon = false`。
+pub struct PasswordDialog(ObjectSubclass<imp::PasswordDialog>) @extends adw::Dialog …;
+
+impl PasswordDialog {
+    fn entry(&self) -> gtk::PasswordEntry;
+    fn submit(&self) -> gtk::Button;
 }
 
-#[derive(CompositeTemplate, Default)]
-#[template(file = "ui/about_page.ui")]
-pub struct AboutPage {
-    #[template_child] pub version_label: TemplateChild<gtk::Label>,
-    #[template_child] pub protocol_credit: TemplateChild<gtk::Label>,
-}
+/// 设置对话框（D28，代码构建）：主题与语言两组三态选择，更改立即生效并持久化。
+pub struct SettingsDialog(ObjectSubclass<imp::SettingsDialog>) @extends adw::PreferencesDialog …;
 
-#[derive(CompositeTemplate, Default)]
-#[template(file = "ui/password_dialog.ui")]
-pub struct PasswordDialog {
-    #[template_child] pub entry: TemplateChild<gtk::PasswordEntry>, // 输入恒不回显；模板设 show-peek-icon = false
-    #[template_child] pub submit: TemplateChild<gtk::Button>,
-}
-
-// 设置对话框（D28）：主题与语言两组三态选择，更改立即生效并持久化。
-pub struct SettingsDialog … {
-    #[template_child] pub theme_row: TemplateChild<adw::ComboRow>,
-    #[template_child] pub language_row: TemplateChild<adw::ComboRow>,
+impl SettingsDialog {
+    fn theme_row(&self) -> adw::ComboRow;
+    fn language_row(&self) -> adw::ComboRow;
 }
 
 pub struct Password(Zeroizing<Vec<u8>>);   // 提交后由 zeroize 清除
@@ -902,7 +902,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 - AC-006（对 GOAL-2、「解锁成功判据与重枚举」）判据按固定优先级返回；仅 PID 变化时结论不等于分区表出现；客户端不发送重枚举触发命令。
 - AC-007（对 GOAL-3、「口令校验」）校验不发送 StartTransaction，只以 EndSession 收尾。
 - AC-008（对 GOAL-2、「报文与原子编码契约」）报文头三个长度域与总长公式匹配；`Set` 类 InvokingID 为目标对象 UID。
-- AC-009（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备卡、锁定徽章、操作区与反馈区子件存在；诊断页有只读列表与脱敏导出；`.ui` 不含文案字面量；口令对话框输入恒不回显且模板不含可见性属性设置；提交后口令缓冲被 zeroize。
+- AC-009（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备分组、锁定徽章、操作分组与反馈区子件存在；诊断页有只读列表与脱敏导出；界面由 Rust 代码构建且可显示文案一律经 i18n 键渲染；口令对话框输入恒不回显且不设可见性属性；提交后口令缓冲被 zeroize。
 - AC-010（对 GOAL-4、「线程模型与错误呈现」）协议操作在工作线程执行；UI 单帧阻塞不超过 100 ms；并发触发得到忙错误。
 - AC-011（对 GOAL-5、NFR 安全）口令不出现在诊断记录、剪贴板与任何持久化文件；诊断记录仅含 CDB 字节、传输方向与响应长度三类字段；导出前经口令脱敏与字节形态过滤。
 - AC-012（对 GOAL-5、「口令设置 / 修改 / 删除」）三个入口均返回证据缺口错误，且不发送任何命令。
@@ -922,7 +922,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D06 | 解锁成功判据按「真实分区表并挂载 > Locking flags `0x1F`→`0x3B` > PID 变化」排序；设备自行重枚举，客户端不发送重枚举触发命令 | §4、§6 | 判据顺序在 §4 固定；客户端无重枚举命令 |
 | D07 | Linux 传输实现为 `sg_io`（SG_IO ioctl 下发 12 字节 CDB），不依赖三星私有驱动 | §4 | `sg_io` 在 §4 指明；契约 `pub trait Transport` 存在 |
 | D08 | macOS 目标行为：应用可启动、可做 USB/IOKit 描述符侦察；盘操作返回 `TransportUnavailable` 并在 UI 呈现；该限制是已证实的平台事实，不得描述为待实现能力 | §4、§5 | `TransportUnavailable` 出现在契约与错误模型；禁止把该限制写成待实现功能 |
-| D09 | UI 技术栈为 Rust + GTK4 + libadwaita，界面用 GtkBuilder `.ui` 文件与 `CompositeTemplate` 派生绑定 | §4 | `CompositeTemplate` 出现在契约；`app-composite-template` 契约命中 |
+| D09 | UI 技术栈为 Rust + GTK4 + libadwaita，界面全部由 Rust 代码构建（不使用 `.ui` 模板，见 D29） | §4 | §4.11 出现「Rust 代码构建」；`app-code-built-ui` 契约命中 |
 | D10 | 口令内存纪律：zeroize 且零日志、零剪贴板、零持久化；日志脱敏纪律与协议仓库参考实现等价 | §4、§6 | `zeroize` 出现在契约与 NFR；锚点 `test_password_zeroized_after_submit` |
 | D11 | 协议层不做自动重放；重试决策归 UI 与用户层，且每次重试都由用户显式触发 | §6 | §6 出现「自动重放」边界说明 |
 | D12 | 范围排除：固件更新、安全擦除（`FactoryReset` 为桩）、性能基准、0xFD 私有通道、Windows、A 路以外的协议路径 | §1.3 | Out of Scope 列出 0xFD 与 `FactoryReset`；实现中无对应路径 |
@@ -942,6 +942,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，模板只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.11、§6、§7、§8 | §4.11 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
 | D27 | 运行目标平台收敛为仅 Linux：移除 macOS 平台目标及其全部产品行为（原「macOS 平台行为契约」需求整节、USB/IOKit 描述符侦察通道、平台降级 UI 与 macOS 专属呈现分支）；`TransportError::Unavailable` 变体保留给非 Linux 平台的 `open` 路径，非 Linux 平台的运行时行为不进 spec 管辖；macOS 传输通道调查记录（`issues/2026-09-14-macOS传输通道.md`）改为 wontfix，`prototype/macos-scsi-dext/` 随之移除 | §1、§3.1、§4、§5、§6、§7、§8 | 正文除 §1.1 背景事实与 §1.3 非目标外零 macOS 表述（由 manifest 的 D27 禁止规则校验）；锚点 `test_macos_transport_unavailable` 删除；实现中不存在 macOS 平台通路相关代码路径（AC-013） |
 | D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染全部静态文案）；侧边栏导航仍为三类页面不变 | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
+| D29 | 界面构建与组件标准化：界面全部由 Rust 代码构建（无 `.ui` 模板、无 `CompositeTemplate`）；全部采用 libadwaita 原生组件与标准页面模式——页面为 `AdwPreferencesPage`，分组为 `AdwPreferencesGroup`，设备信息为 `AdwActionRow`（状态徽章置于行尾），操作入口为 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令），侧边栏导航为挂内置 `.navigation-sidebar` 类的 `GtkListBox`，设置对话框为 `AdwPreferencesDialog` + `AdwComboRow` | §4.11、§9 | §4.11 出现 `AdwPreferencesPage` 与 `AdwButtonRow`；`app-code-built-ui` 契约命中 |
 
 ## 10. 验证
 
@@ -975,7 +976,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | `test_settings_keyfile_roundtrip` | `crates/magi-app` | 设置键值持久化往返：写入后读回一致，损坏或缺失回落默认 |
 | `test_language_precedence` | `crates/magi-app` | 语言优先级：应用内显式选择 > 环境变量 > 默认 zh-CN |
 | `test_theme_default_is_dark` | `crates/magi-app` | 默认主题为深色（§4.11 深色侧边栏判据） |
-| `test_settings_dialog_instantiates_with_template` | `crates/magi-app` | 设置对话框模板实例化与两个三态行的默认选中态 |
+| `test_settings_dialog_instantiates` | `crates/magi-app` | 设置对话框实例化与两个三态行的默认选中态 |
 
 兼容/迁移屏障表（条件 / 满足标准 / 验收证据）：
 
