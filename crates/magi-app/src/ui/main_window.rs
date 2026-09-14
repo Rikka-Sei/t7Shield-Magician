@@ -168,7 +168,8 @@ mod imp {
         pub nav_list: gtk::ListBox,
         pub nav_labels: Vec<gtk::Label>,
         pub content_stack: gtk::Stack,
-        pub platform_notice_label: gtk::Label,
+        pub platform_group: adw::PreferencesGroup,
+        pub platform_row: adw::ActionRow,
         pub device_group: adw::PreferencesGroup,
         pub device_row: adw::ActionRow,
         pub device_icon: gtk::Image,
@@ -223,12 +224,14 @@ mod imp {
             header.set_title_widget(Some(&window_title));
             header.pack_end(&action_preferences);
 
-            // —— 侧边栏：品牌标题栏 + 导航列表 + 底部平台说明 ——
-            let brand_label = gtk::Label::new(None);
+            // —— 侧边栏：品牌标题（内容首项，不叠加第二条标题栏）+ 导航列表 ——
+            let brand_label = gtk::Label::builder()
+                .xalign(0.0)
+                .halign(gtk::Align::Start)
+                .margin_top(6)
+                .margin_bottom(2)
+                .build();
             brand_label.add_css_class("title-4");
-            let sidebar_header = adw::HeaderBar::new();
-            sidebar_header.add_css_class("flat");
-            sidebar_header.set_title_widget(Some(&brand_label));
 
             let nav_list = gtk::ListBox::builder()
                 .selection_mode(gtk::SelectionMode::Single)
@@ -251,26 +254,13 @@ mod imp {
                 nav_labels.push(label);
             }
 
-            let platform_notice_label = gtk::Label::builder()
-                .xalign(0.0)
-                .wrap(true)
-                .vexpand(true)
-                .valign(gtk::Align::End)
-                .build();
-            platform_notice_label.add_css_class("dim-label");
-            platform_notice_label.add_css_class("caption");
-
             let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
             sidebar_box.set_margin_top(12);
             sidebar_box.set_margin_bottom(12);
             sidebar_box.set_margin_start(12);
             sidebar_box.set_margin_end(12);
+            sidebar_box.append(&brand_label);
             sidebar_box.append(&nav_list);
-            sidebar_box.append(&platform_notice_label);
-
-            let sidebar_view = adw::ToolbarView::new();
-            sidebar_view.add_top_bar(&sidebar_header);
-            sidebar_view.set_content(Some(&sidebar_box));
 
             // —— 页面栈：仪表盘 / 诊断 / 关于（每页一个 AdwPreferencesPage）——
             let content_stack = gtk::Stack::builder()
@@ -395,15 +385,19 @@ mod imp {
             about_group.add(&about_version_row);
             about_group.add(&about_device_row);
             about_group.add(&about_repository_row);
+            let platform_row = adw::ActionRow::new();
+            let platform_group = adw::PreferencesGroup::new();
+            platform_group.add(&platform_row);
             let about_page = adw::PreferencesPage::new();
             about_page.add(&about_group);
+            about_page.add(&platform_group);
             content_stack.add_named(&about_page, Some(NavItem::About.page_name()));
 
             // —— 分栏视图与根容器 ——
             let split_view = adw::OverlaySplitView::builder()
                 .min_sidebar_width(240.0)
                 .max_sidebar_width(280.0)
-                .sidebar(&sidebar_view)
+                .sidebar(&sidebar_box)
                 .content(&content_stack)
                 .build();
 
@@ -421,7 +415,8 @@ mod imp {
                 nav_list,
                 nav_labels,
                 content_stack,
-                platform_notice_label,
+                platform_group,
+                platform_row,
                 device_group,
                 device_row,
                 device_icon,
@@ -570,6 +565,8 @@ impl MainWindow {
         imp.about_device_row.set_title(&t!("about.device_title"));
         imp.about_repository_row
             .set_title(&t!("about.repository_title"));
+        imp.platform_group
+            .set_title(&t!("about.platform_title"));
         imp.about_version_row
             .set_subtitle(env!("CARGO_PKG_VERSION"));
         imp.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
@@ -587,13 +584,9 @@ impl MainWindow {
             .set_tooltip_text(Some(&t!("action.preferences")));
         imp.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
-        // 窄窗口折叠时才显示侧边栏开关；开关与 show-sidebar 双向同步（原生绑定）。
+        // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
         // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
         // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
-        imp.split_view
-            .bind_property("collapsed", &imp.sidebar_toggle, "visible")
-            .sync_create()
-            .build();
         imp.split_view
             .bind_property("show-sidebar", &imp.sidebar_toggle, "active")
             .bidirectional()
@@ -810,10 +803,10 @@ impl MainWindow {
         imp.status_icon.set_icon_name(Some(status_icon_name(identity)));
     }
 
-    /// 平台说明文案（D27：Linux 通道说明；置于侧边栏底部）。
+    /// 平台说明文案（D27：Linux 通道说明；置于关于页「运行环境」分组）。
     pub fn show_platform_notice(&self) {
         let text = t!("platform.linux_notice").to_string();
-        self.imp().platform_notice_label.set_label(&text);
+        self.imp().platform_row.set_subtitle(text.as_str());
     }
 
     /// 进度条与步骤文案（§4.13：7 个 `UnlockStep`）。
@@ -1161,6 +1154,8 @@ impl MainWindow {
         imp.about_device_row.set_title(&t!("about.device_title"));
         imp.about_repository_row
             .set_title(&t!("about.repository_title"));
+        imp.platform_group
+            .set_title(&t!("about.platform_title"));
         imp.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
         imp.about_repository_row
             .set_subtitle(t!("about.repository").as_ref());

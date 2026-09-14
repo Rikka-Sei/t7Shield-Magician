@@ -13,6 +13,7 @@ dashboard:
 about:
   version_title: "Version"
   device_title: "Supported device"
+  platform_title: "Runtime"
   repository_title: "Protocol reference"
   repository: "Protocol reference: t7Shield-protocol repository"
   notice: "This tool only unlocks the drive and checks your password. Firmware updates, secure erase, benchmarking, and other maintenance features are not supported."
