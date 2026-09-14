@@ -3,7 +3,8 @@
 //! 结构全部来自 `ui/main_window.ui`（K5：`.ui` 只放 id/class，文案零字面量），本文件只做
 //! 文案赋值、入口敏感度刷新与流程装配；协议 I/O 一律经 [`crate::jobs`] 在工作线程执行。
 //! 布局全部使用 libadwaita/GTK 原生组件与内置样式类（D28：零自定义 CSS）；结果区经
-//! [`Outcome`] 语义分级（success/error 内置类 + symbolic 图标）统一呈现。
+//! [`Outcome`] 语义分级（success/error 内置类 + symbolic 图标）统一呈现。HeaderBar 提供
+//! 首选项入口（D28），语言切换后由 [`Self::relocalize`] 重设全部静态文案并重放动态呈现。
 //!
 //! 主流程（§4.13）：启动即扫描设备 → 更新设备卡片/状态/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
@@ -108,6 +109,16 @@ pub(crate) fn status_icon_name(identity: DeviceIdentity) -> &'static str {
         DeviceIdentity::Unrecognized => "dialog-question-symbolic",
     }
 }
+/// 结果区呈现的重放数据（relocalize 用）。
+#[derive(Debug, Clone)]
+enum StoredOutcome {
+    /// 固定结果键（result.* / progress.idle 之外的结果）。
+    Result(&'static str),
+    /// 已解锁并挂载（含挂载点参数）。
+    Mounted(Vec<String>),
+    /// 错误（呈现码 + 原因/建议键由 AppError 推导）。
+    Error(AppError),
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
@@ -117,6 +128,12 @@ pub(crate) struct WindowState {
     action: Option<ActionId>,
     /// 周期重扫状态机：呈现中身份、在位缓存与空态防抖计数。
     rescan: RescanState,
+    /// 结果区重放缓存（语言切换后按新语言重放）。
+    last_outcome: Option<StoredOutcome>,
+    /// 最后一次设备扫描命中（relocalize 重放设备卡文案用；空态清除）。
+    last_hit: Option<ScanHit>,
+    /// 打开中的口令对话框（语言切换时同步重渲染）。
+    open_dialog: Option<glib::WeakRef<PasswordDialog>>,
 }
 
 mod imp {
@@ -197,6 +214,8 @@ mod imp {
         pub action_cancel: TemplateChild<gtk::Button>,
         #[template_child]
         pub action_export_diagnostics: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub action_preferences: TemplateChild<gtk::Button>,
         #[template_child]
         pub split_view: TemplateChild<adw::OverlaySplitView>,
         #[template_child]
@@ -368,6 +387,8 @@ impl MainWindow {
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_export_diagnostics
             .set_label(&t!("action.export_diagnostics"));
+        imp.action_preferences
+            .set_tooltip_text(Some(&t!("action.preferences")));
         self.show_outcome(&t!("progress.idle"), Outcome::Neutral);
         self.show_unknown_device();
         self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
@@ -398,6 +419,12 @@ impl MainWindow {
             #[weak]
             this,
             move |_| this.export_diagnostics()
+        ));
+        let this = self.clone();
+        imp.action_preferences.connect_clicked(glib::clone!(
+            #[weak]
+            this,
+            move |_| this.present_preferences()
         ));
         let this = self.clone();
         imp.nav_list.connect_row_selected(glib::clone!(
@@ -509,10 +536,10 @@ impl MainWindow {
         };
         self.apply_actions(identity, &gate);
     }
-
-    /// 设备卡片（§4.12：型号、VID:PID、设备节点、锁定状态、描述符摘要）。
     fn show_hit(&self, hit: &ScanHit) {
         let imp = self.imp();
+        // relocalize 重放缓存：语言切换后按新语言重放设备卡文案。
+        self.state().borrow_mut().last_hit = Some(hit.clone());
         imp.device_area_stack.set_visible_child_name("card");
         imp.status_label
             .set_label(&t!(hit.job.identity.status_key()));
@@ -537,6 +564,8 @@ impl MainWindow {
     /// 设备卡片空态（§4.1：不识别为 T7 Shield，入口保持禁用）。
     fn show_unknown_device(&self) {
         let imp = self.imp();
+        // 空态与设备卡互斥：清除重放缓存，relocalize 才会重放空态而不是陈旧设备卡。
+        self.state().borrow_mut().last_hit = None;
         imp.device_area_stack.set_visible_child_name("empty");
         imp.status_label
             .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
@@ -568,17 +597,22 @@ impl MainWindow {
 
     /// 进度条与步骤文案（§4.13：7 个 `UnlockStep`）。
     pub fn show_step(&self, step: UnlockStep) {
+        let imp = self.imp();
         let total = UnlockStep::ALL.len() as f64;
         let done = UnlockStep::ALL
             .iter()
             .position(|candidate| *candidate == step)
             .map(|index| (index + 1) as f64)
             .unwrap_or(0.0);
-        self.imp().progress_box.set_visible(true);
-        self.imp().progress.set_fraction(done / total);
-        self.imp()
-            .result_label
-            .set_label(&t!(format!("progress.{step}")));
+        // 步骤文案先摘旧结果语义（上一次成功/错误的着色与图标不得残留），
+        // 再显示进度区并写步骤文案（不走 show_outcome——那会隐藏进度区）。
+        for class in ["success", "error", "dim-label"] {
+            imp.result_label.remove_css_class(class);
+        }
+        imp.result_icon.set_visible(false);
+        imp.progress_box.set_visible(true);
+        imp.progress.set_fraction(done / total);
+        imp.result_label.set_label(&t!(format!("progress.{step}")));
     }
 
     /// 结果区统一呈现（§4.12/§6）：文本 + 语义类 + 图标；进度条随结果/错误隐藏。
@@ -607,14 +641,16 @@ impl MainWindow {
         imp.progress.set_fraction(0.0);
         imp.progress_box.set_visible(false);
     }
-
     /// 结果文案（§4.8 判据分级 / 取消 / 校验结论）。
     pub fn show_result(&self, message_key: &'static str) {
+        // relocalize 重放缓存（success/neutral 均记；重放时重复写同一值，幂等无害）。
+        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Result(message_key));
         self.show_outcome(&t!(message_key), result_kind(message_key));
     }
-
     /// 错误呈现：呈现码 + 一句原因 + 一句建议（§4.13）。
     pub fn show_error(&self, error: &AppError) -> String {
+        // relocalize 重放缓存（错误经呈现码/原因/建议键重放）。
+        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Error(error.clone()));
         let code = presentation::presentation_code(error);
         let text = format!(
             "{code}：{}；{}",
@@ -691,6 +727,8 @@ impl MainWindow {
         // §6：重新打开对话框 → 本会话的口令重试预算复位。
         self.state().borrow_mut().gate.open_dialog();
         let dialog = PasswordDialog::new(action);
+        // relocalize 联动缓存：语言切换时同步重渲染打开中的对话框（弱引用，不阻止回收）。
+        self.state().borrow_mut().open_dialog = Some(dialog.downgrade());
         let this = self.clone();
         dialog.submit_button().connect_clicked(glib::clone!(
             #[weak]
@@ -785,6 +823,9 @@ impl MainWindow {
             if mounted.is_empty() {
                 self.show_result(key);
             } else {
+                // relocalize 重放缓存：挂载点参数不走固定结果键，单独缓存。
+                self.state().borrow_mut().last_outcome =
+                    Some(StoredOutcome::Mounted(mounted.clone()));
                 let text = format!(
                     "{} {}",
                     t!(key),
@@ -839,6 +880,110 @@ impl MainWindow {
             ),
         );
     }
+
+    /// 打开设置对话框（D28）：装入当前设置快照；更改即时生效并回写本窗口。
+    fn present_preferences(&self) {
+        let settings = crate::settings::Settings::load();
+        let dialog = crate::settings_dialog::SettingsDialog::new(self, settings);
+        dialog.present(Some(self));
+    }
+
+    /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
+    ///
+    /// 静态文案与 setup() 同源（文案段已集中）；设备卡、结果区与口令对话框按缓存重放：
+    /// show_hit/show_result/show_error 重放时会重复写同一缓存值，幂等无害，不加守卫。
+    pub fn relocalize(&self) {
+        let imp = self.imp();
+        imp.window_title.set_title(&t!("app.title"));
+        imp.window_title.set_subtitle(&t!("app.subtitle"));
+        imp.brand_label.set_label(&t!("app.title"));
+        imp.nav_dashboard_label
+            .set_label(&t!(NavItem::Dashboard.label_key()));
+        imp.nav_diagnostics_label
+            .set_label(&t!(NavItem::Diagnostics.label_key()));
+        imp.nav_about_label
+            .set_label(&t!(NavItem::About.label_key()));
+        imp.dashboard_title_label.set_label(&t!("dashboard.title"));
+        imp.diagnostics_title_label
+            .set_label(&t!("diagnostics.view_title"));
+        imp.diagnostics_hint_label
+            .set_label(&t!("diagnostics.hint"));
+        imp.about_title_label.set_label(&t!("nav.about"));
+        imp.about_version_label
+            .set_label(&t!("about.version", version = env!("CARGO_PKG_VERSION")));
+        imp.about_repository_label
+            .set_label(&t!("about.repository"));
+        imp.about_notice_label.set_label(&t!("about.notice"));
+        imp.sidebar_notice_label.set_label(&t!("app.subtitle"));
+        imp.device_group_title.set_label(&t!("device.group_title"));
+        imp.device_model_label.set_label(&t!("device.model"));
+        for action in ActionId::ALL {
+            if let Some(button) = self.action_button(action) {
+                button.set_label(&t!(action.label_key()));
+            }
+        }
+        imp.action_cancel.set_label(&t!("action.cancel"));
+        imp.action_export_diagnostics
+            .set_label(&t!("action.export_diagnostics"));
+        imp.action_preferences
+            .set_tooltip_text(Some(&t!("action.preferences")));
+        imp.sidebar_toggle
+            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
+        imp.device_node_caption.set_label(&t!("device.node"));
+        imp.device_channel_caption
+            .set_label(&t!("device.channel_title"));
+        imp.device_descriptor_caption
+            .set_label(&t!("device.descriptor_title"));
+        imp.actions_caption
+            .set_label(&t!("dashboard.actions_title"));
+        imp.feedback_caption
+            .set_label(&t!("dashboard.feedback_title"));
+        imp.password_admin_note
+            .set_label(&t!("reason.evidence_gap"));
+        imp.empty_state
+            .set_title(&t!(DeviceIdentity::Unrecognized.status_key()));
+        imp.empty_state
+            .set_description(Some(&t!("device.empty_hint")));
+        // 设备卡重放：有缓存命中按新语言重渲染（不走 refresh_devices——
+        // RescanState 身份不变时返回 Keep，不会重刷文案）。
+        let last_hit = self.state().borrow().last_hit.clone();
+        match last_hit {
+            Some(hit) => self.show_hit(&hit),
+            None => self.show_unknown_device(),
+        }
+        self.show_platform_notice();
+        self.refresh_actions();
+        // 结果区重放。
+        let last_outcome = self.state().borrow().last_outcome.clone();
+        match last_outcome {
+            Some(StoredOutcome::Result(key)) => self.show_result(key),
+            Some(StoredOutcome::Mounted(volumes)) => {
+                let text = format!(
+                    "{} {}",
+                    t!("result.RealPartitionTable"),
+                    t!("result.mounted", volumes = volumes.join(", "))
+                );
+                self.show_outcome(&text, Outcome::Success);
+            }
+            Some(StoredOutcome::Error(error)) => {
+                self.show_error(&error);
+            }
+            None => self.show_outcome(&t!("progress.idle"), Outcome::Neutral),
+        }
+        let current = imp.content_stack.visible_child_name().unwrap_or_default();
+        if current.as_str() == NavItem::Diagnostics.page_name() {
+            self.refresh_diagnostics_view();
+        }
+        let dialog = self
+            .state()
+            .borrow()
+            .open_dialog
+            .as_ref()
+            .and_then(|weak| weak.upgrade());
+        if let Some(dialog) = dialog {
+            dialog.relocalize();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -865,6 +1010,7 @@ mod tests {
             "status_icon",
             "result_icon",
             "sidebar_toggle",
+            "action_preferences",
         ] {
             assert!(
                 ids.contains(&required.to_string()),
@@ -889,6 +1035,17 @@ mod tests {
             property_value(dialog, "show-peek-icon"),
             Some("false".to_string())
         );
+
+        // D28 设置对话框：结构与两个三态行齐备，文案零字面量。
+        let settings: &str = include_str!("ui/settings_dialog.ui");
+        let ids = collect_ids(settings);
+        for required in ["appearance_group", "theme_row", "language_row"] {
+            assert!(
+                ids.contains(&required.to_string()),
+                "设置对话框缺子件 {required}：{ids:?}"
+            );
+        }
+        assert_no_display_literals(settings);
     }
 
     /// 锚点（§10）：侧边栏导航 ≥3 项且选中态唯一。
@@ -1125,5 +1282,61 @@ mod tests {
         assert!(text.starts_with("EmptyPassword"));
         assert!(text.contains(&t!("EmptyPassword.reason").to_string()));
         assert!(text.contains(&t!("EmptyPassword.advice").to_string()));
+    }
+
+    /// 锚点（D28）：设置对话框模板可实例化，两个三态行齐备且默认选中态正确。
+    #[test]
+    fn test_settings_dialog_instantiates_with_template() {
+        if !crate::test_support::gtk_ready("test_settings_dialog_instantiates_with_template") {
+            return;
+        }
+        let window = MainWindow::new();
+        let dialog = crate::settings_dialog::SettingsDialog::new(&window, Default::default());
+        let imp = dialog.imp();
+        assert_eq!(imp.theme_row.get().type_().name(), "AdwComboRow");
+        assert_eq!(imp.language_row.get().type_().name(), "AdwComboRow");
+        // 默认深色主题选中第 3 行；默认语言跟随系统选中第 1 行。
+        assert_eq!(imp.theme_row.selected(), 2);
+        assert_eq!(imp.language_row.selected(), 0);
+        // 两个三态行各 3 个候选项（模型在 relocalize 中装配）。
+        let theme_model = imp.theme_row.model().expect("主题行必须有模型");
+        assert_eq!(theme_model.n_items(), 3);
+        let language_model = imp.language_row.model().expect("语言行必须有模型");
+        assert_eq!(language_model.n_items(), 3);
+        // 语言 autonym 键在两种界面语言下取值相同（D28：语言用自称呈现）。
+        for key in ["settings.lang_zh", "settings.lang_en"] {
+            let zh = rust_i18n::t!(key, locale = presentation::DEFAULT_LOCALE).to_string();
+            let en = rust_i18n::t!(key, locale = presentation::FALLBACK_LANGUAGE).to_string();
+            assert_eq!(zh, en, "{key} 的 autonym 必须语言无关");
+        }
+    }
+
+    /// 步骤文案不得残留上一次结果的语义（成功后再操作：摘 success/error/dim-label
+    /// 着色并隐藏结果图标，进度区保持可见）。
+    #[test]
+    fn test_show_step_clears_stale_outcome_classes() {
+        if !crate::test_support::gtk_ready("test_show_step_clears_stale_outcome_classes") {
+            return;
+        }
+        let window = MainWindow::new();
+        // 先呈现一次成功结果（success 着色 + emblem-ok 图标）。
+        window.show_result("result.RealPartitionTable");
+        let imp = window.imp();
+        assert!(imp.result_label.has_css_class("success"));
+        assert!(imp.result_icon.is_visible());
+        // 再进入下一次作业的步骤呈现：旧语义必须被摘除。
+        window.show_step(UnlockStep::ALL[0]);
+        for class in ["success", "error", "dim-label"] {
+            assert!(
+                !imp.result_label.has_css_class(class),
+                "步骤文案不得残留 {class}"
+            );
+        }
+        assert!(!imp.result_icon.is_visible());
+        assert!(imp.progress_box.is_visible());
+        assert_eq!(
+            imp.result_label.label(),
+            t!(format!("progress.{}", UnlockStep::ALL[0])).to_string()
+        );
     }
 }

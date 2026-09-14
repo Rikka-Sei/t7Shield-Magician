@@ -34,6 +34,12 @@ pub mod password_dialog;
 /// `AppError` → 呈现码映射与文案键（§4.13 表）。
 pub mod presentation;
 
+/// D28 应用内设置：主题/语言三态、KeyFile 持久化与运行时应用。
+pub mod settings;
+
+/// D28 设置对话框（`CompositeTemplate`）。
+pub mod settings_dialog;
+
 #[cfg(test)]
 mod test_support;
 
@@ -44,21 +50,22 @@ use libadwaita as adw;
 /// 应用 ID（非用户可见文案）。
 pub const APP_ID: &str = "dev.rikki.MagiShield";
 
-/// 启动应用：初始化界面语言后运行 `adw::Application`。
+/// 启动应用（D28）：装载设置 → 解析界面语言 → 应用主题 → 运行 `adw::Application`。
 pub fn run() -> gtk::glib::ExitCode {
-    init_locale();
+    let settings = settings::Settings::load();
+    rust_i18n::set_locale(settings.resolve_locale(current_env_tag().as_deref()));
     let app = adw::Application::builder().application_id(APP_ID).build();
+    settings.apply_theme();
     main_window::MainWindow::install(&app);
     app.run()
 }
 
-/// 界面语言初始化：`en*` 环境取 `en`，其余取 `zh-CN`（§6：默认 zh-CN、提供 en）。
-pub fn init_locale() {
-    let tag = std::env::var("LC_ALL")
+/// 环境变量语言标签（D28 语言优先级链的中间级）：LC_ALL → LC_MESSAGES → LANG。
+fn current_env_tag() -> Option<String> {
+    std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_MESSAGES"))
         .or_else(|_| std::env::var("LANG"))
-        .ok();
-    rust_i18n::set_locale(presentation::locale_for_tag(tag.as_deref()));
+        .ok()
 }
 
 #[cfg(test)]

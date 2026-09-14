@@ -34,6 +34,8 @@ mod imp {
         pub body_label: TemplateChild<gtk::Label>,
         #[template_child]
         pub error_label: TemplateChild<gtk::Label>,
+        /// 对话框承载的操作（relocalize 按它重取标题键）。
+        pub(crate) action: std::cell::Cell<ActionId>,
     }
 
     #[glib::object_subclass]
@@ -75,6 +77,7 @@ impl PasswordDialog {
     pub fn new(action: ActionId) -> Self {
         let dialog: Self = glib::Object::new();
         let imp = dialog.imp();
+        imp.action.set(action);
         imp.dialog_title.set_title(&t!(action.label_key()));
         imp.body_label.set_label(&t!("password.body"));
         imp.error_label.set_label("");
@@ -122,6 +125,18 @@ impl PasswordDialog {
     pub fn reset(&self) {
         self.imp().entry.set_text("");
         self.imp().error_label.set_label("");
+    }
+
+    /// 语言切换后重设对话框文案（D28）：标题/说明/按钮/占位符全部重取（与构造同构）。
+    pub fn relocalize(&self) {
+        let imp = self.imp();
+        imp.dialog_title
+            .set_title(&t!(imp.action.get().label_key()));
+        imp.body_label.set_label(&t!("password.body"));
+        imp.submit.set_label(&t!("password.submit"));
+        imp.cancel.set_label(&t!("password.cancel"));
+        imp.entry
+            .set_placeholder_text(Some(&t!("password.placeholder")));
     }
 }
 

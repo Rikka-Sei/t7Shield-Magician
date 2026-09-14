@@ -44,6 +44,19 @@ action:
   delete_password: "Delete password"
   cancel: "Cancel"
   export_diagnostics: "Export diagnostics"
+  preferences: "Settings"
+settings:
+  title: "Settings"
+  group: "Interface"
+  theme: "Theme"
+  theme_system: "Follow system"
+  theme_light: "Light"
+  theme_dark: "Dark"
+  language: "Language"
+  lang_system: "Follow system"
+  lang_zh: "中文"
+  lang_en: "English"
+
 reason:
   evidence_gap: "The byte-level sequence for password writes (set/change/delete) is not yet proven; this action is unavailable"
   reenumerating: "The device is re-enumerating; wait for the observation window to end"

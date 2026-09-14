@@ -26,6 +26,11 @@
             <property name="title-widget">
               <object class="AdwWindowTitle" id="window_title"/>
             </property>
+            <child type="end">
+              <object class="GtkButton" id="action_preferences">
+                <property name="icon-name">emblem-system-symbolic</property>
+              </object>
+            </child>
           </object>
         </child>
         <property name="content">

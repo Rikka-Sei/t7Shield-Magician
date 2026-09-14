@@ -17,9 +17,10 @@ use magi_transport::transport::{DeviceTarget, Transport, TransportError};
 use crate::presentation::AppError;
 
 /// §4.12 主窗口的操作入口。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ActionId {
     /// 解锁（锁定态可用）。
+    #[default]
     Unlock,
     /// 校验口令（锁定态可用）。
     ValidatePassword,

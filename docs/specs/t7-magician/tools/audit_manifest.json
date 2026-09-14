@@ -1271,6 +1271,34 @@
         "crates/magi-app/**/*.rs"
       ],
       "required": true
+    },
+    {
+      "name": "test_settings_keyfile_roundtrip",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_language_precedence",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_theme_default_is_dark",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
+    },
+    {
+      "name": "test_settings_dialog_instantiates_with_template",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true
     }
   ],
   "barriers": [

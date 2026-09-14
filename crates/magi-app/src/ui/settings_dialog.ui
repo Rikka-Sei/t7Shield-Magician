@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  D28 设置对话框模板（K5）：只承载结构与 id；组标题、行标题与全部候选项文案
+  都在 SettingsDialog 侧经 i18n 键赋值（locales/*.yml），模板不含任何字面量。
+  页与组经 GtkBuildable `<child>` 挂接（AdwPreferencesDialog/Group 的原生装配方式）。
+-->
+<interface>
+  <requires lib="gtk" version="4.10"/>
+  <requires lib="Adw" version="1.6"/>
+  <template class="MagiSettingsDialog" parent="AdwPreferencesDialog">
+    <property name="content-width">420</property>
+    <property name="content-height">360</property>
+    <child>
+      <object class="AdwPreferencesPage">
+        <child>
+          <object class="AdwPreferencesGroup" id="appearance_group">
+            <child>
+              <object class="AdwComboRow" id="theme_row"/>
+            </child>
+            <child>
+              <object class="AdwComboRow" id="language_row"/>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

@@ -43,6 +43,19 @@ action:
   delete_password: "删除口令"
   cancel: "取消"
   export_diagnostics: "导出诊断"
+  preferences: "设置"
+settings:
+  title: "设置"
+  group: "界面"
+  theme: "主题"
+  theme_system: "跟随系统"
+  theme_light: "浅色"
+  theme_dark: "深色"
+  language: "语言"
+  lang_system: "跟随系统"
+  lang_zh: "中文"
+  lang_en: "English"
+
 reason:
   evidence_gap: "口令写操作（设置/修改/删除）的字节级序列尚未被证实，当前不可执行"
   reenumerating: "设备正在重枚举，请等待观察窗口结束"

@@ -972,6 +972,10 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | `test_sidebar_navigation_items` | `crates/magi-app` | 侧边栏导航项 ≥ 3 且当前项选中态唯一 |
 | `test_lock_badge_matches_device_state` | `crates/magi-app` | 锁定状态徽章与 `DeviceState` 一一对应 |
 | `test_diagnostics_export_is_redacted` | `crates/magi-app` | 诊断导出内容经口令脱敏 |
+| `test_settings_keyfile_roundtrip` | `crates/magi-app` | 设置键值持久化往返：写入后读回一致，损坏或缺失回落默认 |
+| `test_language_precedence` | `crates/magi-app` | 语言优先级：应用内显式选择 > 环境变量 > 默认 zh-CN |
+| `test_theme_default_is_dark` | `crates/magi-app` | 默认主题为深色（§4.11 深色侧边栏判据） |
+| `test_settings_dialog_instantiates_with_template` | `crates/magi-app` | 设置对话框模板实例化与两个三态行的默认选中态 |
 
 兼容/迁移屏障表（条件 / 满足标准 / 验收证据）：
 
@@ -980,4 +984,4 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | 协议层黄金向量 | `crates/magi-protocol` 存在 | 帧构造与解析测试全部通过，黄金向量与 §4 一致 | `python tools/barriers.py` 中协议层屏障 PASS |
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，非 Linux 平台 `open` 返回通道不可用 | 同上，传输层屏障 PASS |
 
-**当前状态（Authoritative）**：切换判据已满足——`crates/magi-protocol`（57 测试）、`crates/magi-transport`（26 测试）、`crates/magi-app`（40 测试）三个 crate 全部落地，上表 20 个测试锚点与全部代码契约在代码中可 grep 命中。2026-09-14 于 nix devShell 内实跑验证三件套（D27 生效后复跑）：`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。本文件自此为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。
+**当前状态（Authoritative）**：切换判据已满足——`crates/magi-protocol`（57 测试）、`crates/magi-transport`（26 测试）、`crates/magi-app`（45 测试）三个 crate 全部落地，上表 24 个测试锚点与全部代码契约在代码中可 grep 命中。2026-09-14 于 nix devShell 内实跑验证三件套（D27 生效后复跑；D28 设置锚点扩充后复验）：`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。本文件自此为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。
