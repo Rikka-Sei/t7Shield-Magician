@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 12,
   "decision_prefix": "D",
-  "latest_decision": 29,
+  "latest_decision": 30,
   "decisions": [
     {
       "decision_id": "D01",
@@ -805,14 +805,14 @@
           "reason": "锁定状态徽章必须与 DeviceState 对应"
         },
         {
-          "pattern": "诊断页",
+          "pattern": "工作日志",
           "count": {
             "min": 2
           },
           "sections": [
             "4"
           ],
-          "reason": "诊断页契约必须落位"
+          "reason": "布局契约必须写明工作日志导出入口（D30）"
         },
         {
           "pattern": "关于页",
@@ -1070,16 +1070,6 @@
       "whitelist": [],
       "required_occurrences": [
         {
-          "pattern": "D29",
-          "count": {
-            "min": 1
-          },
-          "sections": [
-            "9"
-          ],
-          "reason": "决策日志必须落位 D29 条目"
-        },
-        {
           "pattern": "AdwPreferencesPage",
           "count": {
             "min": 1
@@ -1087,17 +1077,47 @@
           "sections": [
             "4"
           ],
-          "reason": "标准页面组件必须写入 §4.11 契约"
+          "reason": "关于页/设置对话框的标准页面组件必须写入 §4.11（D30 后操作入口为按钮，AdwButtonRow 规则移交 D28/D30 语境）"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D30",
+      "required_terms": [],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D30",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D30 条目"
         },
         {
-          "pattern": "AdwButtonRow",
+          "pattern": "导出工作日志",
           "count": {
             "min": 1
           },
           "sections": [
             "4"
           ],
-          "reason": "操作入口的标准组件必须写入 §4.11 契约"
+          "reason": "设置对话框的工作日志导出入口必须写入 §4.11"
+        },
+        {
+          "pattern": "AdwToast",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "Toast 瞬时提示必须写入 §4.11"
         }
       ],
       "forbidden_occurrences": []
@@ -1139,12 +1159,12 @@
       "id": "app-code-built-ui",
       "pattern": "adw::PreferencesPage",
       "count": {
-        "min": 3
+        "min": 2
       },
       "source_globs": [
         "crates/magi-app/src/**/*.rs"
       ],
-      "reason": "界面由 Rust 代码构建且三个页面均为 AdwPreferencesPage（D29）"
+      "reason": "界面由 Rust 代码构建（关于页与设置对话框均为 AdwPreferencesPage，D29/D30）"
     },
     {
       "id": "password-zeroize",

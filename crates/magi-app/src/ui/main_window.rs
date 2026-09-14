@@ -1,20 +1,20 @@
-//! §4.12 主窗口（D29：界面全部由 Rust 代码构建，使用 libadwaita 原生组件与标准页面模式）。
+//! §4.12 主窗口（D30：界面由 Rust 代码构建，libadwaita 原生组件）。
 //!
-//! 结构：`AdwToolbarView` + `AdwHeaderBar`（含首选项入口与侧边栏开关）+
-//! `AdwOverlaySplitView`（侧边栏 = 挂内置 `.navigation-sidebar` 类的 `GtkListBox`；主区 =
-//! `GtkStack`，三页均为 `AdwPreferencesPage`）。
+//! 结构：`AdwToolbarView` + `AdwHeaderBar`（侧边栏开关、动态页名标题、首选项入口）+
+//! `AdwOverlaySplitView`（侧边栏 = 原生标题栏品牌 + 挂 `.navigation-sidebar` 的 `GtkListBox`；
+//! 主区 = `AdwToastOverlay` 包裹的仪表盘卡片布局与关于页）。
 //!
-//! 仪表盘（D29）：设备分组（`AdwPreferencesGroup` + `AdwActionRow`：产品名 / VID:PID /
-//! 设备节点 / 传输通道 / USB 备用设置，锁定状态徽章置于设备行尾部）+ 操作分组
-//! （五个 `AdwButtonRow`）+ 进度与结果分组；诊断页 = 只读记录卡片 + 脱敏导出入口；
-//! 关于页 = 版本 / 支持设备 / 协议参考三行。
+//! 导航为两类页面（概览 / 关于，D30）：原诊断页移除，「导出工作日志」入口移入设置对话框。
+//! 仪表盘：卡片式设备区（图标 + 产品名 + VID:PID + 锁定徽章 + 信息行）与操作卡
+//! （解锁 / 验证口令主按钮 + 口令管理禁用组）+ 进度与结果反馈；成功结果经 `AdwToast`
+//! 瞬时提示（libadwaita 特色）。
 //!
 //! 文案（K5/AC-015）：本文件不内联任何可显示字符串，全部经 i18n 键在装配时赋值。
 //!
-//! 主流程（§4.13）：启动即扫描设备 → 更新设备分组/状态徽章/入口 → 用户触发 → 口令对话框 →
+//! 主流程（§4.13）：启动即扫描设备 → 更新设备卡/状态/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
 //! 设备热插拔（§4.1 REQ-001）：工作线程周期重扫，经 MainContext channel 回主线程，
-//! 由重扫状态机（[`crate::controller::RescanState`]）统一裁决设备分组与入口更新。
+//! 由重扫状态机（[`crate::controller::RescanState`]）统一裁决设备区与入口更新。
 
 use std::cell::RefCell;
 
@@ -33,26 +33,23 @@ use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
 use crate::ui::password_dialog::PasswordDialog;
 use crate::presentation::{self, AppError, AppEvent};
 
-/// 侧边栏导航项（对标原版 Magician 的分组导航列表；选中态恒唯一）。
+/// 侧边栏导航项（D30：两类页面；选中态恒唯一）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavItem {
-    /// 仪表盘：设备分组、操作入口、进度与结果。
+    /// 概览：设备卡、操作入口、进度与结果。
     Dashboard,
-    /// 诊断：环形缓冲记录与脱敏导出。
-    Diagnostics,
     /// 关于：版本与协议引用。
     About,
 }
 
 impl NavItem {
     /// 导航项全集（顺序即呈现顺序）。
-    pub const ALL: [NavItem; 3] = [NavItem::Dashboard, NavItem::Diagnostics, NavItem::About];
+    pub const ALL: [NavItem; 2] = [NavItem::Dashboard, NavItem::About];
 
     /// 页面栈中的页名。
     pub fn page_name(self) -> &'static str {
         match self {
             NavItem::Dashboard => "dashboard",
-            NavItem::Diagnostics => "diagnostics",
             NavItem::About => "about",
         }
     }
@@ -61,7 +58,6 @@ impl NavItem {
     pub fn label_key(self) -> &'static str {
         match self {
             NavItem::Dashboard => "nav.dashboard",
-            NavItem::Diagnostics => "nav.diagnostics",
             NavItem::About => "nav.about",
         }
     }
@@ -70,7 +66,6 @@ impl NavItem {
     pub fn icon_name(self) -> &'static str {
         match self {
             NavItem::Dashboard => "view-grid-symbolic",
-            NavItem::Diagnostics => "view-list-symbolic",
             NavItem::About => "help-about-symbolic",
         }
     }
@@ -104,13 +99,13 @@ pub fn status_icon_name(identity: DeviceIdentity) -> &'static str {
     }
 }
 
-/// 结果区语义分级（内置类）：中性（弱化文本，无图标）、成功（success + emblem-ok）、
+/// 结果区语义分级（内置类）：中性（弱化文本，无图标）、成功（success + emblem-ok + Toast）、
 /// 错误（error + dialog-warning）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Outcome {
     /// 中性：进度步骤、取消、未观察到重枚举等。
     Neutral,
-    /// 成功：判据确认或口令被接受。
+    /// 成功：判据确认或口令被接受（附加 Toast 瞬时提示）。
     Success,
     /// 错误：操作失败（红色分级）。
     Error,
@@ -148,7 +143,7 @@ pub(crate) struct WindowState {
     rescan: RescanState,
     /// 结果区重放缓存（语言切换后按新语言重放）。
     last_outcome: Option<StoredOutcome>,
-    /// 最后一次设备扫描命中（relocalize 重放设备分组文案用；空态清除）。
+    /// 最后一次设备扫描命中（relocalize 重放设备卡文案用；空态清除）。
     last_hit: Option<ScanHit>,
     /// 打开中的口令对话框（语言切换时同步重渲染）。
     open_dialog: Option<glib::WeakRef<PasswordDialog>>,
@@ -157,48 +152,52 @@ pub(crate) struct WindowState {
 mod imp {
     use super::*;
 
-    /// 主窗口子件（D29）：全部在 Rust 侧构建，无 `.ui` 模板、无 `#[template_child]`。
+    /// 主窗口子件（D29/D30：全部在 Rust 侧构建，无 `.ui` 模板）。
     pub struct MainWindow {
         pub root: adw::ToolbarView,
         pub sidebar_toggle: gtk::ToggleButton,
         pub action_preferences: gtk::Button,
+        /// 主标题栏标题：随当前页动态切换（概览 / 关于）。
         pub window_title: adw::WindowTitle,
-        pub brand_label: gtk::Label,
+        /// 侧边栏品牌标题（原生标题栏控件，尺寸由 libadwaita 统一）。
+        pub sidebar_title: adw::WindowTitle,
         pub split_view: adw::OverlaySplitView,
         pub nav_list: gtk::ListBox,
         pub nav_labels: Vec<gtk::Label>,
         pub content_stack: gtk::Stack,
-        pub platform_group: adw::PreferencesGroup,
-        pub platform_row: adw::ActionRow,
-        pub device_group: adw::PreferencesGroup,
-        pub device_row: adw::ActionRow,
+        pub toast_overlay: adw::ToastOverlay,
+        pub device_card: adw::Bin,
         pub device_icon: gtk::Image,
+        pub device_model_label: gtk::Label,
+        pub device_ids_label: gtk::Label,
         pub status_icon: gtk::Image,
         pub status_label: gtk::Label,
         pub badge_box: gtk::Box,
-        pub node_row: adw::ActionRow,
-        pub channel_row: adw::ActionRow,
-        pub descriptor_row: adw::ActionRow,
-        pub actions_group: adw::PreferencesGroup,
-        pub action_unlock: adw::ButtonRow,
-        pub action_validate_password: adw::ButtonRow,
-        pub action_set_password: adw::ButtonRow,
-        pub action_change_password: adw::ButtonRow,
-        pub action_delete_password: adw::ButtonRow,
-        pub feedback_group: adw::PreferencesGroup,
+        pub node_caption: gtk::Label,
+        pub node_label: gtk::Label,
+        pub channel_caption: gtk::Label,
+        pub channel_label: gtk::Label,
+        pub descriptor_caption: gtk::Label,
+        pub descriptor_label: gtk::Label,
+        pub actions_card: adw::Bin,
+        pub action_unlock: gtk::Button,
+        pub action_validate_password: gtk::Button,
+        pub action_set_password: gtk::Button,
+        pub action_change_password: gtk::Button,
+        pub action_delete_password: gtk::Button,
+        pub password_admin_note: gtk::Label,
         pub progress_box: gtk::Box,
         pub progress: gtk::ProgressBar,
         pub action_cancel: gtk::Button,
         pub result_row: gtk::Box,
         pub result_icon: gtk::Image,
         pub result_label: gtk::Label,
-        pub diagnostics_group: adw::PreferencesGroup,
-        pub diagnostics_view: gtk::TextView,
-        pub action_export_diagnostics: adw::ButtonRow,
         pub about_group: adw::PreferencesGroup,
+        pub platform_group: adw::PreferencesGroup,
         pub about_version_row: adw::ActionRow,
         pub about_device_row: adw::ActionRow,
         pub about_repository_row: adw::ActionRow,
+        pub platform_row: adw::ActionRow,
         pub(crate) state: RefCell<WindowState>,
     }
 
@@ -209,9 +208,9 @@ mod imp {
     }
 
     impl MainWindow {
-        /// 构建完整界面树（D29：代码构建，不使用 `.ui` 模板）。
+        /// 构建完整界面树（D30：卡片式仪表盘 + 动态页名 + 两类页面）。
         fn build() -> Self {
-            // —— 顶栏：侧边栏开关（start）、标题（中间）、首选项入口（end）——
+            // —— 顶栏：侧边栏开关（start）、动态页名标题（中间）、首选项入口（end）——
             let sidebar_toggle = gtk::ToggleButton::builder()
                 .icon_name("sidebar-show-symbolic")
                 .build();
@@ -224,14 +223,11 @@ mod imp {
             header.set_title_widget(Some(&window_title));
             header.pack_end(&action_preferences);
 
-            // —— 侧边栏：品牌标题（内容首项，不叠加第二条标题栏）+ 导航列表 ——
-            let brand_label = gtk::Label::builder()
-                .xalign(0.0)
-                .halign(gtk::Align::Start)
-                .margin_top(6)
-                .margin_bottom(2)
-                .build();
-            brand_label.add_css_class("title-4");
+            // —— 侧边栏：原生标题栏品牌 + 导航列表（D30：两类页面）——
+            let sidebar_title = adw::WindowTitle::new("", "");
+            let sidebar_header = adw::HeaderBar::new();
+            sidebar_header.add_css_class("flat");
+            sidebar_header.set_title_widget(Some(&sidebar_title));
 
             let nav_list = gtk::ListBox::builder()
                 .selection_mode(gtk::SelectionMode::Single)
@@ -259,20 +255,15 @@ mod imp {
             sidebar_box.set_margin_bottom(12);
             sidebar_box.set_margin_start(12);
             sidebar_box.set_margin_end(12);
-            sidebar_box.append(&brand_label);
             sidebar_box.append(&nav_list);
 
-            // —— 页面栈：仪表盘 / 诊断 / 关于（每页一个 AdwPreferencesPage）——
-            let content_stack = gtk::Stack::builder()
-                .transition_type(gtk::StackTransitionType::Crossfade)
-                .transition_duration(200)
-                .hexpand(true)
-                .vexpand(true)
-                .build();
+            let sidebar_view = adw::ToolbarView::new();
+            sidebar_view.add_top_bar(&sidebar_header);
+            sidebar_view.set_content(Some(&sidebar_box));
 
-            // 仪表盘 · 设备分组：设备行（徽章在行尾）+ 三条信息行。
+            // —— 仪表盘（D30：卡片式布局，贴近官方软件的信息层级）——
             let device_icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
-            device_icon.set_pixel_size(32);
+            device_icon.set_pixel_size(64);
             device_icon.add_css_class("dim-label");
             let status_icon = gtk::Image::builder().pixel_size(16).build();
             let status_label = gtk::Label::new(None);
@@ -282,43 +273,108 @@ mod imp {
             badge_box.append(&status_icon);
             badge_box.append(&status_label);
 
-            let device_row = adw::ActionRow::new();
-            device_row.add_prefix(&device_icon);
-            device_row.add_suffix(&badge_box);
+            let device_model_label = gtk::Label::builder()
+                .xalign(0.0)
+                .halign(gtk::Align::Start)
+                .wrap(true)
+                .build();
+            device_model_label.add_css_class("title-3");
+            let device_ids_label = gtk::Label::builder()
+                .xalign(0.0)
+                .halign(gtk::Align::Start)
+                .wrap(true)
+                .selectable(true)
+                .build();
+            device_ids_label.add_css_class("dim-label");
+            device_ids_label.add_css_class("caption");
 
-            let node_row = adw::ActionRow::new();
-            let channel_row = adw::ActionRow::new();
-            let descriptor_row = adw::ActionRow::new();
+            let device_header = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+            device_header.append(&device_icon);
+            let device_text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            device_text.set_hexpand(true);
+            device_text.set_valign(gtk::Align::Center);
+            device_text.append(&device_model_label);
+            device_text.append(&device_ids_label);
+            device_header.append(&device_text);
+            badge_box.set_valign(gtk::Align::Start);
+            device_header.append(&badge_box);
 
-            let device_group = adw::PreferencesGroup::new();
-            device_group.add(&device_row);
-            device_group.add(&node_row);
-            device_group.add(&channel_row);
-            device_group.add(&descriptor_row);
+            let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+            separator.set_margin_top(16);
+            separator.set_margin_bottom(16);
 
-            let dashboard_page = adw::PreferencesPage::new();
-            dashboard_page.add(&device_group);
+            let node_caption = caption_label();
+            let node_label = value_label();
+            let channel_caption = caption_label();
+            let channel_label = value_label();
+            let descriptor_caption = caption_label();
+            let descriptor_label = value_label();
+            descriptor_label.add_css_class("dim-label");
+            let info_grid = gtk::Box::new(gtk::Orientation::Vertical, 12);
+            for (caption, value) in [
+                (&node_caption, &node_label),
+                (&channel_caption, &channel_label),
+                (&descriptor_caption, &descriptor_label),
+            ] {
+                let field = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                field.append(caption);
+                field.append(value);
+                info_grid.append(&field);
+            }
 
-            // 仪表盘 · 操作分组：五个 AdwButtonRow（文案与敏感度在装配时装配）。
-            let actions_group = adw::PreferencesGroup::new();
-            let action_unlock = adw::ButtonRow::new();
-            action_unlock.set_start_icon_name(Some("system-lock-screen-symbolic"));
-            let action_validate_password = adw::ButtonRow::new();
-            action_validate_password.set_start_icon_name(Some("dialog-password-symbolic"));
-            let action_set_password = adw::ButtonRow::new();
-            action_set_password.set_start_icon_name(Some("document-new-symbolic"));
-            let action_change_password = adw::ButtonRow::new();
-            action_change_password.set_start_icon_name(Some("document-edit-symbolic"));
-            let action_delete_password = adw::ButtonRow::new();
-            action_delete_password.set_start_icon_name(Some("edit-delete-symbolic"));
-            actions_group.add(&action_unlock);
-            actions_group.add(&action_validate_password);
-            actions_group.add(&action_set_password);
-            actions_group.add(&action_change_password);
-            actions_group.add(&action_delete_password);
-            dashboard_page.add(&actions_group);
+            let device_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            device_body.set_margin_top(20);
+            device_body.set_margin_bottom(20);
+            device_body.set_margin_start(20);
+            device_body.set_margin_end(20);
+            device_body.append(&device_header);
+            device_body.append(&separator);
+            device_body.append(&info_grid);
+            let device_card = adw::Bin::new();
+            device_card.add_css_class("card");
+            device_card.set_child(Some(&device_body));
 
-            // 仪表盘 · 进度与结果分组。
+            // 操作卡：主操作（解锁 / 验证口令）+ 口令管理禁用组 + 证据缺口说明。
+            let action_unlock = gtk::Button::new();
+            action_unlock.add_css_class("suggested-action");
+            let action_validate_password = gtk::Button::new();
+            let primary_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            primary_row.set_homogeneous(true);
+            primary_row.append(&action_unlock);
+            primary_row.append(&action_validate_password);
+
+            let action_set_password = flat_button();
+            let action_change_password = flat_button();
+            let action_delete_password = flat_button();
+            let admin_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            admin_row.set_homogeneous(true);
+            admin_row.set_margin_top(12);
+            admin_row.append(&action_set_password);
+            admin_row.append(&action_change_password);
+            admin_row.append(&action_delete_password);
+
+            let password_admin_note = gtk::Label::builder()
+                .xalign(0.0)
+                .halign(gtk::Align::Start)
+                .wrap(true)
+                .margin_top(12)
+                .build();
+            password_admin_note.add_css_class("dim-label");
+            password_admin_note.add_css_class("caption");
+
+            let actions_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            actions_body.set_margin_top(20);
+            actions_body.set_margin_bottom(20);
+            actions_body.set_margin_start(20);
+            actions_body.set_margin_end(20);
+            actions_body.append(&primary_row);
+            actions_body.append(&admin_row);
+            actions_body.append(&password_admin_note);
+            let actions_card = adw::Bin::new();
+            actions_card.add_css_class("card");
+            actions_card.set_child(Some(&actions_body));
+
+            // 进度与结果反馈（无进度 / 无结果时整组不占版面）。
             let progress = gtk::ProgressBar::builder()
                 .hexpand(true)
                 .valign(gtk::Align::Center)
@@ -345,39 +401,34 @@ mod imp {
             result_row.append(&result_icon);
             result_row.append(&result_label);
 
-            let feedback_group = adw::PreferencesGroup::new();
-            feedback_group.add(&progress_box);
-            feedback_group.add(&result_row);
-            dashboard_page.add(&feedback_group);
+            let feedback_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
+            feedback_box.append(&progress_box);
+            feedback_box.append(&result_row);
 
-            content_stack.add_named(&dashboard_page, Some(NavItem::Dashboard.page_name()));
+            let dashboard_column = gtk::Box::new(gtk::Orientation::Vertical, 24);
+            dashboard_column.set_margin_top(24);
+            dashboard_column.set_margin_bottom(24);
+            dashboard_column.set_margin_start(24);
+            dashboard_column.set_margin_end(24);
+            dashboard_column.append(&device_card);
+            dashboard_column.append(&actions_card);
+            dashboard_column.append(&feedback_box);
 
-            // 诊断页：只读记录卡片 + 脱敏导出入口。
-            let diagnostics_view = gtk::TextView::builder()
-                .editable(false)
-                .cursor_visible(false)
-                .monospace(true)
-                .wrap_mode(gtk::WrapMode::WordChar)
-                .top_margin(12)
-                .bottom_margin(12)
-                .left_margin(12)
-                .right_margin(12)
-                .build();
-            let diagnostics_scroller = gtk::ScrolledWindow::builder()
+            let clamp = adw::Clamp::new();
+            clamp.set_maximum_size(600);
+            clamp.set_tightening_threshold(500);
+            clamp.set_child(Some(&dashboard_column));
+
+            let dashboard_scroller = gtk::ScrolledWindow::builder()
                 .hscrollbar_policy(gtk::PolicyType::Never)
-                .min_content_height(240)
-                .child(&diagnostics_view)
+                .child(&clamp)
                 .build();
-            diagnostics_scroller.add_css_class("card");
-            let action_export_diagnostics = adw::ButtonRow::new();
-            let diagnostics_group = adw::PreferencesGroup::new();
-            diagnostics_group.add(&diagnostics_scroller);
-            diagnostics_group.add(&action_export_diagnostics);
-            let diagnostics_page = adw::PreferencesPage::new();
-            diagnostics_page.add(&diagnostics_group);
-            content_stack.add_named(&diagnostics_page, Some(NavItem::Diagnostics.page_name()));
 
-            // 关于页：版本 / 支持设备 / 协议参考。
+            // Toast 承载层：成功结果的瞬时提示（libadwaita 特色）。
+            let toast_overlay = adw::ToastOverlay::new();
+            toast_overlay.set_child(Some(&dashboard_scroller));
+
+            // —— 关于页：版本 / 适用设备 / 协议参考 / 运行环境 ——
             let about_version_row = adw::ActionRow::new();
             let about_device_row = adw::ActionRow::new();
             let about_repository_row = adw::ActionRow::new();
@@ -391,13 +442,22 @@ mod imp {
             let about_page = adw::PreferencesPage::new();
             about_page.add(&about_group);
             about_page.add(&platform_group);
+
+            // —— 页面栈（D30：两类页面）——
+            let content_stack = gtk::Stack::builder()
+                .transition_type(gtk::StackTransitionType::Crossfade)
+                .transition_duration(200)
+                .hexpand(true)
+                .vexpand(true)
+                .build();
+            content_stack.add_named(&toast_overlay, Some(NavItem::Dashboard.page_name()));
             content_stack.add_named(&about_page, Some(NavItem::About.page_name()));
 
             // —— 分栏视图与根容器 ——
             let split_view = adw::OverlaySplitView::builder()
                 .min_sidebar_width(240.0)
                 .max_sidebar_width(280.0)
-                .sidebar(&sidebar_box)
+                .sidebar(&sidebar_view)
                 .content(&content_stack)
                 .build();
 
@@ -410,45 +470,72 @@ mod imp {
                 sidebar_toggle,
                 action_preferences,
                 window_title,
-                brand_label,
+                sidebar_title,
                 split_view,
                 nav_list,
                 nav_labels,
                 content_stack,
-                platform_group,
-                platform_row,
-                device_group,
-                device_row,
+                toast_overlay,
+                device_card,
                 device_icon,
+                device_model_label,
+                device_ids_label,
                 status_icon,
                 status_label,
                 badge_box,
-                node_row,
-                channel_row,
-                descriptor_row,
-                actions_group,
+                node_caption,
+                node_label,
+                channel_caption,
+                channel_label,
+                descriptor_caption,
+                descriptor_label,
+                actions_card,
                 action_unlock,
                 action_validate_password,
                 action_set_password,
                 action_change_password,
                 action_delete_password,
-                feedback_group,
+                password_admin_note,
                 progress_box,
                 progress,
                 action_cancel,
                 result_row,
                 result_icon,
                 result_label,
-                diagnostics_group,
-                diagnostics_view,
-                action_export_diagnostics,
                 about_group,
+                platform_group,
                 about_version_row,
                 about_device_row,
                 about_repository_row,
+                platform_row,
                 state: RefCell::new(WindowState::default()),
             }
         }
+    }
+
+    /// 弱化说明小标题（内置 caption 类）。
+    fn caption_label() -> gtk::Label {
+        let label = gtk::Label::builder().xalign(0.0).halign(gtk::Align::Start).build();
+        label.add_css_class("dim-label");
+        label.add_css_class("caption");
+        label
+    }
+
+    /// 字段值标签（可选中文本）。
+    fn value_label() -> gtk::Label {
+        gtk::Label::builder()
+            .xalign(0.0)
+            .halign(gtk::Align::Start)
+            .wrap(true)
+            .selectable(true)
+            .build()
+    }
+
+    /// 次级操作按钮（内置 flat 类）。
+    fn flat_button() -> gtk::Button {
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button
     }
 
     #[glib::object_subclass]
@@ -461,7 +548,6 @@ mod imp {
     impl ObjectImpl for MainWindow {
         fn constructed(&self) {
             self.parent_constructed();
-            // 构建期完成界面树的挂载（D29：无 GtkBuilder 模板，全部代码构建）。
             let window = self.obj();
             <super::MainWindow as adw::prelude::AdwApplicationWindowExt>::set_content(
                 &window,
@@ -533,8 +619,7 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.window_title.set_title(&t!("app.title"));
-        imp.brand_label.set_label(&t!("app.title"));
+        imp.sidebar_title.set_title(&t!("app.title"));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
@@ -545,19 +630,10 @@ impl MainWindow {
         if let Some(row) = imp.nav_list.row_at_index(0) {
             imp.nav_list.select_row(Some(&row));
         }
-        imp.device_group.set_title(&t!("device.group_title"));
-        imp.actions_group.set_title(&t!("dashboard.actions_title"));
-        imp.actions_group
-            .set_description(Some(&t!("reason.evidence_gap")));
-        imp.feedback_group
-            .set_title(&t!("dashboard.feedback_title"));
-        imp.node_row.set_title(&t!("device.node"));
-        imp.channel_row.set_title(&t!("device.channel_title"));
-        imp.descriptor_row.set_title(&t!("device.descriptor_title"));
-        imp.diagnostics_group
-            .set_title(&t!("diagnostics.view_title"));
-        imp.diagnostics_group
-            .set_description(Some(&t!("diagnostics.hint")));
+        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
+        imp.node_caption.set_label(&t!("device.node"));
+        imp.channel_caption.set_label(&t!("device.channel_title"));
+        imp.descriptor_caption.set_label(&t!("device.descriptor_title"));
         imp.about_group.set_title(&t!(NavItem::About.label_key()));
         imp.about_group
             .set_description(Some(&t!("about.notice")));
@@ -573,18 +649,16 @@ impl MainWindow {
         imp.about_repository_row
             .set_subtitle(t!("about.repository").as_ref());
         for action in ActionId::ALL {
-            if let Some(row) = self.action_row(action) {
-                row.set_title(&t!(action.label_key()));
+            if let Some(button) = self.action_button(action) {
+                button.set_label(&t!(action.label_key()));
             }
         }
-        imp.action_export_diagnostics
-            .set_title(&t!("action.export_diagnostics"));
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
         imp.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
-        // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
+        // 侧边栏开关常显：桌面宽度也应能收起侧边栏（GNOME 应用惯例）。
         // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
         // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
         imp.split_view
@@ -601,11 +675,11 @@ impl MainWindow {
     fn connect_actions(&self) {
         let imp = self.imp();
         for action in ActionId::ALL {
-            let Some(row) = self.action_row(action) else {
+            let Some(button) = self.action_button(action) else {
                 continue;
             };
             let this = self.clone();
-            row.connect_activated(glib::clone!(
+            button.connect_clicked(glib::clone!(
                 #[weak]
                 this,
                 move |_| this.trigger(action)
@@ -616,12 +690,6 @@ impl MainWindow {
             #[weak]
             this,
             move |_| this.cancel_current()
-        ));
-        let this = self.clone();
-        imp.action_export_diagnostics.connect_activated(glib::clone!(
-            #[weak]
-            this,
-            move |_| this.export_diagnostics()
         ));
         let this = self.clone();
         imp.action_preferences.connect_clicked(glib::clone!(
@@ -647,11 +715,9 @@ impl MainWindow {
 
     /// 权威轮次的设备刷新（§4.1：Linux sysfs 扫描）。
     ///
-    /// 同步取数并强制呈现（启动与会话收尾 §3.3：会话收尾后必须重新读取设备态再裁决
-    /// 呈现）；扫描阶段的失败只记诊断（呈现码进诊断导出）——设备分组空态与侧边栏平台
-    /// 说明已给出路，结果区留给用户触发的作业呈现（与周期轮次同口径）。
+    /// 同步取数并强制呈现（启动与会话收尾 §3.3）；扫描阶段的失败只记诊断——设备卡空态
+    /// 与关于页平台说明已给出路，结果区留给用户触发的作业呈现（与周期轮次同口径）。
     fn refresh_devices(&self) {
-        self.show_platform_notice();
         let outcome = jobs::fetch_scan();
         if let Some(error) = &outcome.error {
             diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
@@ -659,7 +725,7 @@ impl MainWindow {
         self.apply_scan(&outcome, true);
     }
 
-    /// 呈现段（主线程）：按重扫状态机裁决并更新设备分组、徽章与入口。
+    /// 呈现段（主线程）：按重扫状态机裁决并更新设备卡、徽章与入口。
     ///
     /// `authoritative`：启动与会话收尾的轮次无视在飞状态强制收敛；周期轮次在作业在飞时
     /// 只更新在位缓存，不改呈现（§6：不打断用户正在看的进度与结果）。
@@ -714,13 +780,13 @@ impl MainWindow {
     /// 按设备态 + 重试预算刷新入口敏感度与禁用理由（§4.12/§4.11）。
     pub fn apply_actions(&self, identity: DeviceIdentity, gate: &UnlockGate) {
         for action in ActionId::ALL {
-            let Some(row) = self.action_row(action) else {
+            let Some(button) = self.action_button(action) else {
                 continue;
             };
             let enabled = gate.allows(action, identity.state());
             let reason_key = gate.disabled_reason_key(action, identity.state());
-            row.set_sensitive(enabled);
-            row.set_tooltip_text(reason_key.map(|key| t!(key).to_string()).as_deref());
+            button.set_sensitive(enabled);
+            button.set_tooltip_text(reason_key.map(|key| t!(key).to_string()).as_deref());
         }
     }
 
@@ -740,19 +806,19 @@ impl MainWindow {
         self.apply_actions(identity, &gate);
     }
 
-    /// 设备分组（§4.12：产品名、VID:PID、设备节点、传输通道、描述符摘要与锁定徽章）。
+    /// 设备卡（§4.12：产品名、VID:PID、设备节点、传输通道、描述符摘要与锁定徽章）。
     fn show_hit(&self, hit: &ScanHit) {
         let imp = self.imp();
-        // relocalize 重放缓存：语言切换后按新语言重放设备分组文案。
+        // relocalize 重放缓存：语言切换后按新语言重放设备卡文案。
         self.state().borrow_mut().last_hit = Some(hit.clone());
-        imp.device_row.set_title(&t!("device.model"));
+        imp.device_model_label.set_label(&t!("device.model"));
         let ids = format!(
             "{} {:04x}:{:04x}",
             t!("device.vid_pid"),
             hit.job.vid,
             hit.job.pid
         );
-        imp.device_row.set_subtitle(ids.as_str());
+        imp.device_ids_label.set_label(&ids);
         imp.status_label
             .set_label(&t!(hit.job.identity.status_key()));
         self.set_badge_class(hit.job.identity);
@@ -761,32 +827,47 @@ impl MainWindow {
             Some(node) => node.to_string(),
             None => String::new(),
         };
-        imp.node_row.set_subtitle(node.as_str());
-        imp.channel_row.set_subtitle(t!("device.channel").as_ref());
-        imp.descriptor_row
-            .set_subtitle(hit.descriptor.as_deref().unwrap_or(""));
-        for row in [&imp.node_row, &imp.channel_row, &imp.descriptor_row] {
-            row.set_visible(true);
+        imp.node_label.set_label(&node);
+        imp.channel_label.set_label(t!("device.channel").as_ref());
+        imp.descriptor_label
+            .set_label(hit.descriptor.as_deref().unwrap_or(""));
+        for widget in [
+            imp.node_caption.upcast_ref::<gtk::Widget>(),
+            imp.node_label.upcast_ref::<gtk::Widget>(),
+            imp.channel_caption.upcast_ref::<gtk::Widget>(),
+            imp.channel_label.upcast_ref::<gtk::Widget>(),
+            imp.descriptor_caption.upcast_ref::<gtk::Widget>(),
+            imp.descriptor_label.upcast_ref::<gtk::Widget>(),
+        ] {
+            widget.set_visible(true);
         }
     }
 
-    /// 设备分组空态（§4.1：不识别为 T7 Shield，入口保持禁用）。
+    /// 设备卡空态（§4.1：不识别为 T7 Shield，入口保持禁用）。
     fn show_unknown_device(&self) {
         let imp = self.imp();
-        // 空态与设备分组互斥：清除重放缓存，relocalize 才会重放空态而不是陈旧设备行。
+        // 空态与设备卡互斥：清除重放缓存，relocalize 才会重放空态而不是陈旧设备卡。
         self.state().borrow_mut().last_hit = None;
-        imp.device_row
-            .set_title(&t!(DeviceIdentity::Unrecognized.status_key()));
-        imp.device_row
-            .set_subtitle(t!("device.empty_hint").as_ref());
+        imp.device_model_label
+            .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
+        imp.device_ids_label.set_label(t!("device.empty_hint").as_ref());
         imp.status_label
             .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
         self.set_badge_class(DeviceIdentity::Unrecognized);
-        // 空态行标题已是「未发现 T7 Shield」，徽章不再重复呈现。
+        // 空态卡标题已是「未发现 T7 Shield」，徽章与信息行不再重复呈现。
         imp.badge_box.set_visible(false);
-        for row in [&imp.node_row, &imp.channel_row, &imp.descriptor_row] {
-            row.set_subtitle("");
-            row.set_visible(false);
+        imp.node_label.set_label("");
+        imp.channel_label.set_label("");
+        imp.descriptor_label.set_label("");
+        for widget in [
+            imp.node_caption.upcast_ref::<gtk::Widget>(),
+            imp.node_label.upcast_ref::<gtk::Widget>(),
+            imp.channel_caption.upcast_ref::<gtk::Widget>(),
+            imp.channel_label.upcast_ref::<gtk::Widget>(),
+            imp.descriptor_caption.upcast_ref::<gtk::Widget>(),
+            imp.descriptor_label.upcast_ref::<gtk::Widget>(),
+        ] {
+            widget.set_visible(false);
         }
     }
 
@@ -824,21 +905,20 @@ impl MainWindow {
             imp.result_label.remove_css_class(class);
         }
         imp.result_icon.set_visible(false);
-        imp.feedback_group.set_visible(true);
         imp.result_row.set_visible(true);
         imp.progress_box.set_visible(true);
         imp.progress.set_fraction(done / total);
         imp.result_label.set_label(&t!(format!("progress.{step}")));
     }
 
-    /// 结果区统一呈现（§4.12/§6）：文本 + 语义类 + 图标；进度条随结果/错误隐藏。
+    /// 结果区统一呈现（§4.12/§6）：文本 + 语义类 + 图标；进度条随结果/错误隐藏；
+    /// 成功结果附加 Toast 瞬时提示（libadwaita 特色）。
     pub(crate) fn show_outcome(&self, text: &str, kind: Outcome) {
         let imp = self.imp();
         for class in ["success", "error", "dim-label"] {
             imp.result_label.remove_css_class(class);
             imp.result_icon.remove_css_class(class);
         }
-        imp.feedback_group.set_visible(true);
         imp.result_row.set_visible(true);
         imp.result_label.set_label(text);
         match kind {
@@ -851,6 +931,7 @@ impl MainWindow {
                 imp.result_icon.add_css_class("success");
                 imp.result_icon.set_icon_name(Some("emblem-ok-symbolic"));
                 imp.result_icon.set_visible(true);
+                imp.toast_overlay.add_toast(adw::Toast::new(text));
             }
             Outcome::Error => {
                 imp.result_label.add_css_class("error");
@@ -874,8 +955,6 @@ impl MainWindow {
         imp.result_row.set_visible(false);
         imp.progress.set_fraction(0.0);
         imp.progress_box.set_visible(false);
-        // 无进度 / 无结果时不保留空分组（标题悬空是主要的空荡感来源）。
-        imp.feedback_group.set_visible(false);
     }
 
     /// 结果文案（§4.8 判据分级 / 取消 / 校验结论）。
@@ -905,10 +984,11 @@ impl MainWindow {
         &self.imp().state
     }
 
-    /// 切换页面并同步导航选中态（选中唯一性由 `GtkListBox` 原生选中机制保证）。
+    /// 切换页面并同步导航选中态与主标题栏页名（选中唯一性由 `GtkListBox` 原生机制保证）。
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
+        imp.window_title.set_title(&t!(item.label_key()));
         let index = NavItem::ALL
             .iter()
             .position(|candidate| *candidate == item)
@@ -918,27 +998,51 @@ impl MainWindow {
                 imp.nav_list.select_row(Some(&row));
             }
         }
-        if item == NavItem::Diagnostics {
-            self.refresh_diagnostics_view();
-        }
     }
 
-    /// 诊断页内容：环形缓冲的脱敏导出文本（只读、不可编辑）。
-    fn refresh_diagnostics_view(&self) {
-        let text = diagnostics::ring().export_redacted();
-        let buffer = self.imp().diagnostics_view.buffer();
-        buffer.set_text(&text);
-    }
-
-    /// 打开设置对话框（D28）：装入当前设置快照；更改即时生效并回写本窗口。
+    /// 打开设置对话框（D28/D30）：主题 / 语言 / 工作日志导出；更改即时生效并持久化。
     fn present_preferences(&self) {
         let settings = crate::settings::Settings::load();
         let dialog = crate::ui::settings_dialog::SettingsDialog::new(self, settings);
         dialog.present(Some(self));
     }
 
-    /// 入口行（按 `ActionId` 取操作分组的 `AdwButtonRow`）。
-    pub fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow> {
+    /// 导出脱敏工作日志（D30：入口在设置对话框；§6 导出前再次过滤）。
+    pub(crate) fn export_diagnostics(&self) {
+        let dialog = gtk::FileDialog::builder()
+            .title(t!("diagnostics.title"))
+            .build();
+        let this = self.clone();
+        dialog.save(
+            Some(self),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak]
+                this,
+                move |result| {
+                    let Ok(file) = result else {
+                        return;
+                    };
+                    let text = diagnostics::ring().export_redacted();
+                    if file
+                        .replace_contents(
+                            text.as_bytes(),
+                            None,
+                            false,
+                            gio::FileCreateFlags::NONE,
+                            gio::Cancellable::NONE,
+                        )
+                        .is_err()
+                    {
+                        this.show_result("diagnostics.export_failed");
+                    }
+                }
+            ),
+        );
+    }
+
+    /// 入口按钮（按 `ActionId` 取操作卡的按钮）。
+    pub fn action_button(&self, action: ActionId) -> Option<gtk::Button> {
         let imp = self.imp();
         Some(match action {
             ActionId::Unlock => imp.action_unlock.clone(),
@@ -1092,61 +1196,23 @@ impl MainWindow {
         self.refresh_actions();
     }
 
-    /// 导出脱敏诊断文本（§6：用户显式导出，导出前再次过滤）。
-    fn export_diagnostics(&self) {
-        let dialog = gtk::FileDialog::builder()
-            .title(t!("diagnostics.title"))
-            .build();
-        let this = self.clone();
-        dialog.save(
-            Some(self),
-            gio::Cancellable::NONE,
-            glib::clone!(
-                #[weak]
-                this,
-                move |result| {
-                    let Ok(file) = result else {
-                        return;
-                    };
-                    let text = diagnostics::ring().export_redacted();
-                    if file
-                        .replace_contents(
-                            text.as_bytes(),
-                            None,
-                            false,
-                            gio::FileCreateFlags::NONE,
-                            gio::Cancellable::NONE,
-                        )
-                        .is_err()
-                    {
-                        this.show_result("diagnostics.export_failed");
-                    }
-                }
-            ),
-        );
-    }
-
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.window_title.set_title(&t!("app.title"));
-        imp.brand_label.set_label(&t!("app.title"));
+        imp.sidebar_title.set_title(&t!("app.title"));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
-        imp.device_group.set_title(&t!("device.group_title"));
-        imp.actions_group.set_title(&t!("dashboard.actions_title"));
-        imp.actions_group
-            .set_description(Some(&t!("reason.evidence_gap")));
-        imp.feedback_group
-            .set_title(&t!("dashboard.feedback_title"));
-        imp.node_row.set_title(&t!("device.node"));
-        imp.channel_row.set_title(&t!("device.channel_title"));
-        imp.descriptor_row.set_title(&t!("device.descriptor_title"));
-        imp.diagnostics_group
-            .set_title(&t!("diagnostics.view_title"));
-        imp.diagnostics_group
-            .set_description(Some(&t!("diagnostics.hint")));
+        let current = imp.content_stack.visible_child_name().unwrap_or_default();
+        let current_item = NavItem::ALL
+            .iter()
+            .find(|item| item.page_name() == current.as_str())
+            .copied()
+            .unwrap_or(NavItem::Dashboard);
+        imp.window_title.set_title(&t!(current_item.label_key()));
+        imp.node_caption.set_label(&t!("device.node"));
+        imp.channel_caption.set_label(&t!("device.channel_title"));
+        imp.descriptor_caption.set_label(&t!("device.descriptor_title"));
         imp.about_group.set_title(&t!(NavItem::About.label_key()));
         imp.about_group
             .set_description(Some(&t!("about.notice")));
@@ -1160,18 +1226,16 @@ impl MainWindow {
         imp.about_repository_row
             .set_subtitle(t!("about.repository").as_ref());
         for action in ActionId::ALL {
-            if let Some(row) = self.action_row(action) {
-                row.set_title(&t!(action.label_key()));
+            if let Some(button) = self.action_button(action) {
+                button.set_label(&t!(action.label_key()));
             }
         }
-        imp.action_export_diagnostics
-            .set_title(&t!("action.export_diagnostics"));
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
         imp.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
-        // 设备分组重放：有缓存命中按新语言重渲染（不走 refresh_devices——
+        // 设备卡重放：有缓存命中按新语言重渲染（不走 refresh_devices——
         // RescanState 身份不变时返回 Keep，不会重刷文案）。
         let last_hit = self.state().borrow().last_hit.clone();
         match last_hit {
@@ -1197,10 +1261,6 @@ impl MainWindow {
             }
             None => self.hide_outcome(),
         }
-        let current = imp.content_stack.visible_child_name().unwrap_or_default();
-        if current.as_str() == NavItem::Diagnostics.page_name() {
-            self.refresh_diagnostics_view();
-        }
         let dialog = self
             .state()
             .borrow()
@@ -1218,7 +1278,16 @@ mod tests {
     use super::*;
     use crate::presentation;
 
-    /// 锚点（§10）：侧边栏导航 ≥3 项且选中态唯一。
+    /// 导航列表行数（`GtkListBox` 无直接计数 API，按索引探测）。
+    fn nav_row_count(list: &gtk::ListBox) -> i32 {
+        let mut count = 0;
+        while list.row_at_index(count).is_some() {
+            count += 1;
+        }
+        count
+    }
+
+    /// 锚点（§10）：侧边栏导航 ≥2 项（D30：两类页面）且选中态唯一。
     #[test]
     fn test_sidebar_navigation_items() {
         // 纯逻辑：任意当前页下选中态恰 1 项且落在该项；页名与标签键互不重复且都能取到文案。
@@ -1252,14 +1321,14 @@ mod tests {
             }
         }
 
-        // 结构（D29：代码构建）：导航列表 ≥3 行、挂内置类、三个页名齐备、选中态唯一。
+        // 结构（D29：代码构建）：导航列表 ≥2 行、挂内置类、页名齐备、选中态唯一。
         if !crate::test_support::gtk_ready("test_sidebar_navigation_items") {
             return;
         }
         let window = MainWindow::new();
         let imp = window.imp();
         let row_count = nav_row_count(&imp.nav_list);
-        assert!(row_count >= 3, "导航项至少 3 项，实际 {row_count}");
+        assert!(row_count >= 2, "导航项至少 2 项（D30 两类页面），实际 {row_count}");
         assert!(
             imp.nav_list.has_css_class("navigation-sidebar"),
             "侧边栏导航必须用内置 navigation-sidebar 类"
@@ -1278,15 +1347,6 @@ mod tests {
             .filter(|row| row.is_selected())
             .count();
         assert_eq!(selected, 1, "任一时刻选中项必须恰 1 个");
-    }
-
-    /// 导航列表行数（`GtkListBox` 无直接计数 API，按索引探测）。
-    fn nav_row_count(list: &gtk::ListBox) -> i32 {
-        let mut count = 0;
-        while list.row_at_index(count).is_some() {
-            count += 1;
-        }
-        count
     }
 
     /// 锚点（§10）：锁定状态徽章与设备态一一对应。
@@ -1345,26 +1405,34 @@ mod tests {
         }
         let window = MainWindow::new();
         let imp = window.imp();
-        // D29：界面由代码构建的 libadwaita 标准组件承载。
-        assert_eq!(imp.device_group.type_().name(), "AdwPreferencesGroup");
-        assert_eq!(imp.device_row.type_().name(), "AdwActionRow");
+        // D30：卡片式仪表盘 + 动态页名标题 + 原生侧边栏品牌标题。
+        assert_eq!(imp.device_card.type_().name(), "AdwBin");
         assert_eq!(imp.status_label.type_().name(), "GtkLabel");
-        assert_eq!(imp.action_unlock.type_().name(), "AdwButtonRow");
+        assert_eq!(imp.action_unlock.type_().name(), "GtkButton");
         assert_eq!(imp.progress.type_().name(), "GtkProgressBar");
         assert_eq!(imp.result_label.type_().name(), "GtkLabel");
+        assert_eq!(
+            imp.toast_overlay.type_().name(),
+            "AdwToastOverlay"
+        );
 
         // 启动态：设备未识别 → 全部入口禁用（§4.1）。
         for action in ActionId::ALL {
-            let row = window.action_row(action).expect("入口行必须存在");
-            assert!(!row.is_sensitive(), "{action:?} 启动态必须禁用");
-            assert!(!row.title().is_empty());
+            let button = window
+                .action_button(action)
+                .expect("入口按钮必须存在");
+            assert!(!button.is_sensitive(), "{action:?} 启动态必须禁用");
+            assert!(!button.label().unwrap_or_default().is_empty());
         }
 
         // 锁定态：解锁/校验可用，写口令入口仍禁用（§4.11）。
         window.apply_actions(DeviceIdentity::Locked, &UnlockGate::new());
-        assert!(window.action_row(ActionId::Unlock).unwrap().is_sensitive());
         assert!(window
-            .action_row(ActionId::ValidatePassword)
+            .action_button(ActionId::Unlock)
+            .unwrap()
+            .is_sensitive());
+        assert!(window
+            .action_button(ActionId::ValidatePassword)
             .unwrap()
             .is_sensitive());
         for action in [
@@ -1372,7 +1440,7 @@ mod tests {
             ActionId::ChangePassword,
             ActionId::DeletePassword,
         ] {
-            assert!(!window.action_row(action).unwrap().is_sensitive());
+            assert!(!window.action_button(action).unwrap().is_sensitive());
         }
 
         // 错误呈现：呈现码 + 原因 + 建议（§4.13）。

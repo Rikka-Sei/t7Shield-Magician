@@ -1,7 +1,7 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
 **状态:** Authoritative（唯一权威）
-**版本:** 0.1（决策基线：D01–D29）
+**版本:** 0.1（决策基线：D01–D30）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端（运行目标平台为仅 Linux）的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与 Linux 传输行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -85,7 +85,7 @@
 ```mermaid
 graph LR
     subgraph app["crates/magi-app（GTK4 + libadwaita）"]
-        UI["应用外壳：侧边栏导航（仪表盘/诊断/关于）<br/>Rust 代码构建 libadwaita 界面（D29）"]
+        UI["应用外壳：侧边栏导航（概览/关于）<br/>Rust 代码构建 libadwaita 界面（D29/D30）"]
         CTL["操作控制器<br/>单飞 + 工作线程 + channel 回主线程"]
         I18N["i18n 资源<br/>zh-CN（默认）/ en"]
     end
@@ -654,15 +654,15 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 正常示例（当前唯一的正确行为）：调用任一函数返回 `Err(PasswordOperationUnspecified)`，UI 呈现「该功能在字节级序列被证实前不可执行」并链接 `issues/2026-09-14-口令写操作证据缺口.md`。
 异常示例（禁止行为）：实现臆造 `Set(C_PIN_SID, ...)` 序列并发送 → 违反本条款；代码评审必须拦截该类实现。
 
-### 4.11 REQ-011 应用外壳与界面契约（侧边栏导航 + 仪表盘 + 口令对话框）
+### 4.11 REQ-011 应用外壳与界面契约（侧边栏导航 + 概览 + 口令对话框）
 
 > **作为** 用户，**我希望** 在一个窗口里看到设备状态与操作入口，并能切到诊断与关于页，**以便** 不必理解协议细节。
 > **优先级:** P0
 > **归因:** D09、D10、D24、D25、D28、D29
 > **验收标准:**
-> - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为三类页面（仪表盘、诊断、关于），导航项数量 ≥ 3，且当前项有选中态（任一时刻选中项唯一）。
-> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备分组（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作分组（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
-> - Given 位于诊断页；When 查看内容；Then 呈现诊断记录的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤与字节形态纵深过滤。
+> - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为两类页面（概览、关于），导航项数量 ≥ 2，且当前项有选中态（任一时刻选中项唯一）。
+> - Given 位于概览页；When 查看设备区；Then 呈现设备卡（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作卡（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
+> - Given 任一页面；When 打开设置对话框并点击「导出工作日志」；Then 脱敏文本落盘，导出内容在写出前再经口令脱敏过滤与字节形态纵深过滤（D30）。
 > - Given 位于关于页；When 查看内容；Then 呈现应用版本与 t7Shield-protocol 协议仓库引用。
 > - Given 任一界面定义；When 渲染；Then 界面全部由 Rust 代码构建（不使用 `.ui` 模板）；可显示文案一律经 i18n 键渲染，Rust 代码中不内联可显示字符串。
 > - Given 口令对话框打开；When 输入口令；Then 输入恒不回显（`GtkPasswordEntry` 的类型固有行为，代码不设置任何可见性属性）、明文切换图标关闭（`show-peek-icon = false`）；提交后口令缓冲立即 zeroize；口令不进入诊断记录、剪贴板与任何持久化存储。
@@ -680,17 +680,16 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 
 | 区域 | 元素 | 可验证判据 |
 |---|---|---|
-| 侧边栏 | 导航项：仪表盘 / 诊断 / 关于 | 导航项数量 ≥ 3；当前项有选中态且唯一；侧边栏为深色外观 |
-| 主区 · 页面 | 每页一个 `AdwPreferencesPage`（仪表盘 / 诊断 / 关于） | 三个页名与导航项一一对应，页面栈中均可取到 |
-| 主区 · 仪表盘 | 设备分组（`AdwPreferencesGroup` + `AdwActionRow`）：产品名、VID/PID、设备节点或平台通道 | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
-| 主区 · 仪表盘 | 锁定状态徽章（ActionRow 尾部） | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
-| 主区 · 仪表盘 | 操作分组（`AdwButtonRow`）：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
-| 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.7 的判据结论 |
-| 诊断页 | 诊断记录只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
+| 侧边栏 | 导航项：概览 / 关于（原生标题栏品牌） | 导航项数量 ≥ 2；当前项有选中态且唯一；侧边栏为深色外观 |
+| 主区 · 页面 | 概览 = `AdwToastOverlay` + `AdwClamp` 卡片布局；关于 = `AdwPreferencesPage` | 两个页名与导航项一一对应；主标题栏标题随当前页切换 |
+| 主区 · 概览 | 设备卡（`.card`：图标 + 产品名 + VID:PID + 行尾锁定徽章 + 信息行） | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
+| 主区 · 概览 | 锁定状态徽章（卡片头部行尾） | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
+| 主区 · 概览 | 操作卡：解锁 / 校验口令（主按钮）+ 口令管理（禁用） | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
+| 主区 · 概览 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.7 的判据结论；成功结果附 `AdwToast` 瞬时提示 |
 | 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；代码不设可见性属性；`show-peek-icon = false` |
 | 关于页 | 版本 / 适用设备 / 协议参考 / 运行环境（平台通道） | 字段齐备，取值与 §4.1/§5 一致 |
 | HeaderBar | 首选项入口 | 任一页面可触达；点击打开设置对话框 |
-| 设置对话框 | 主题三态、语言三态 | 默认深色主题；默认语言跟随系统；更改立即生效并持久化 |
+| 设置对话框 | 主题三态、语言三态、工作日志导出入口 | 默认深色主题；默认语言跟随系统；更改立即生效并持久化；导出前执行口令脱敏（D10） |
 
 契约：
 
@@ -707,14 +706,14 @@ impl MainWindow {
     //（以下访问器为示意；实现为 imp 结构体字段，经 window.imp() 取用）
     /// 侧边栏导航容器：`GtkListBox` 挂内置 `.navigation-sidebar` 类，导航项 >= 3。
     fn nav_list(&self) -> gtk::ListBox;
-    /// 页面栈：仪表盘 / 诊断 / 关于（页名与 `NavItem::page_name()` 一致）。
+    /// 页面栈：概览 / 关于（页名与 `NavItem::page_name()` 一致）。
     fn content_stack(&self) -> gtk::Stack;
-    /// 仪表盘设备分组：设备行与设备信息行（`AdwPreferencesGroup` + `AdwActionRow`）。
-    fn device_group(&self) -> adw::PreferencesGroup;
-    /// 设备行：锁定状态徽章以 `AdwActionRow` 尾部承载（与 `DeviceState` 一一对应）。
-    fn device_row(&self) -> adw::ActionRow;
-    /// 操作分组：五个 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令）。
-    fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow>;
+    /// 设备卡（`.card`）：产品名 / VID:PID / 信息行，锁定徽章在卡片头部行尾。
+    fn device_card(&self) -> adw::Bin;
+    /// 操作卡按钮（解锁 / 校验口令主按钮与禁用的口令管理按钮）。
+    fn action_button(&self, action: ActionId) -> Option<gtk::Button>;
+    /// Toast 承载层：成功结果的瞬时提示。
+    fn toast_overlay(&self) -> adw::ToastOverlay;
     /// 首选项入口（HeaderBar 末端按钮）。
     fn action_preferences(&self) -> gtk::Button;
     /// 进度与结果反馈：进度条（`UnlockStep` 驱动）与结果行。
@@ -722,8 +721,8 @@ impl MainWindow {
     fn result_label(&self) -> gtk::Label;
 }
 
-// 诊断页（页面栈页）：只读记录（`GtkTextView` 卡片）与脱敏导出入口（`AdwButtonRow`）。
-// 关于页（页面栈页）：版本 / 适用设备 / 协议参考 / 运行环境四行（`AdwActionRow`）。
+// 关于页（页面栈页，`AdwPreferencesPage`）：版本 / 适用设备 / 协议参考 / 运行环境四行。
+// 工作日志导出（D30）：设置对话框内的 `AdwButtonRow` 入口，脱敏后落盘。
 
 /// 口令对话框（代码构建）：输入恒不回显，`show-peek-icon = false`。
 pub struct PasswordDialog(ObjectSubclass<imp::PasswordDialog>) @extends adw::Dialog …;
@@ -744,7 +743,7 @@ impl SettingsDialog {
 pub struct Password(Zeroizing<Vec<u8>>);   // 提交后由 zeroize 清除
 ```
 
-正常示例：锁定态下打开应用 → 仪表盘页显示设备卡与锁定徽章 → 点击「解锁」→ 弹出不回显口令对话框 → 提交后在结果区显示进度与最终判据；切换到诊断页可查看只读日志并导出脱敏文本。
+正常示例：锁定态下打开应用 → 概览页显示设备卡与锁定徽章 → 点击「解锁」→ 弹出不回显口令对话框 → 提交后在结果区显示进度与最终判据，成功时附 Toast 瞬时提示；打开设置可切换主题/语言并导出脱敏工作日志。
 异常示例：口令为空时提交 → 对话框就地提示并保持打开，不构造任何报文；口令管理入口被点击 → 呈现证据缺口说明，不打开对话框、不下发命令。
 
 ### 4.12 REQ-012 线程模型与错误呈现
@@ -903,7 +902,7 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 - AC-006（对 GOAL-2、「解锁成功判据与重枚举」）判据按固定优先级返回；仅 PID 变化时结论不等于分区表出现；客户端不发送重枚举触发命令。
 - AC-007（对 GOAL-3、「口令校验」）校验不发送 StartTransaction，只以 EndSession 收尾。
 - AC-008（对 GOAL-2、「报文与原子编码契约」）报文头三个长度域与总长公式匹配；`Set` 类 InvokingID 为目标对象 UID。
-- AC-009（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 3 且当前项有选中态；设备分组、锁定徽章、操作分组与反馈区子件存在；诊断页有只读列表与脱敏导出；界面由 Rust 代码构建且可显示文案一律经 i18n 键渲染；口令对话框输入恒不回显且不设可见性属性；提交后口令缓冲被 zeroize。
+- AC-009（对 GOAL-4、「应用外壳与界面契约」）侧边栏导航项 ≥ 2 且当前项有选中态；设备卡、锁定徽章、操作卡与反馈区子件存在；设置对话框有工作日志脱敏导出入口；界面由 Rust 代码构建且可显示文案一律经 i18n 键渲染；口令对话框输入恒不回显且不设可见性属性；提交后口令缓冲被 zeroize。
 - AC-010（对 GOAL-4、「线程模型与错误呈现」）协议操作在工作线程执行；UI 单帧阻塞不超过 100 ms；并发触发得到忙错误。
 - AC-011（对 GOAL-5、NFR 安全）口令不出现在诊断记录、剪贴板与任何持久化文件；诊断记录仅含 CDB 字节、传输方向与响应长度三类字段；导出前经口令脱敏与字节形态过滤。
 - AC-012（对 GOAL-5、「口令设置 / 修改 / 删除」）三个入口均返回证据缺口错误，且不发送任何命令。
@@ -939,11 +938,12 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 | D22 | 进度步骤覆盖 §4.6 的 7 条命令：`UnlockStep` 定义 7 个变体（StartTransaction、4 条 `Set`、EndTransaction、EndSession） | §4.12 | §4.12 出现 `UnlockStep` 与“7 个变体”；旧的步数写法零命中（由 manifest 的 D22 禁止规则校验） |
 | D23 | 接口承载：§4.6 的五个 payload 函数显式接收 `base_comid: u16`、`&SessionIds` 与 `StatusListForm`；`SessionIds` 只承载 TSN/HSN，不得含 ComID；状态列表形态参数化 | §4.6、§4.9 | 五个函数签名均含 `base_comid` 与 `form`；正文声明 `SessionIds` 不含 ComID |
 | D24 | 命名体系：crate 前缀 `t7-` 改为 `magi-`（`crates/magi-protocol`、`crates/magi-transport`、`crates/magi-app`），主程序二进制名 `magi`，应用显示名 `MagiShield`，应用 ID `dev.rikki.MagiShield`（显示名与 ID 为暂定值，调整时按变更流程更新）；spec 目录名本轮不改 | §3.1、§4.11、§5、§10 | 旧 crate 前缀与旧标识符零命中（由 manifest 的 D24 禁止规则校验）；manifest 的 globs 与屏障命令指向 `magi-*`；§4.11 出现 `MagiShield` 与 APP_ID |
-| D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（仪表盘 / 诊断 / 关于，当前项有选中态）+ 仪表盘区（设备卡、锁定状态徽章、操作区、进度与结果反馈）+ 诊断页（环形缓冲只读列表、脱敏导出）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.11、§8 | 布局契约表与六条验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
+| D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（当前项有选中态）+ 概览区（设备卡、锁定状态徽章、操作卡、进度与结果反馈）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.11、§8 | 布局契约表与验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
 | D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，代码只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.11、§6、§7、§8 | §4.11 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
 | D27 | 运行目标平台收敛为仅 Linux：移除 macOS 平台目标及其全部产品行为（原「macOS 平台行为契约」需求整节、USB/IOKit 描述符侦察通道、平台降级 UI 与 macOS 专属呈现分支）；`TransportError::Unavailable` 变体保留给非 Linux 平台的 `open` 路径，非 Linux 平台的运行时行为不进 spec 管辖；macOS 传输通道调查记录（`issues/2026-09-14-macOS传输通道.md`）改为 wontfix，`prototype/macos-scsi-dext/` 随之移除 | §1、§3.1、§4、§5、§6、§7、§8 | 正文除 §1.1 背景事实与 §1.3 非目标外零 macOS 表述（由 manifest 的 D27 禁止规则校验）；锚点 `test_macos_transport_unavailable` 删除；实现中不存在 macOS 平台通路相关代码路径（AC-013） |
-| D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染全部静态文案）；侧边栏导航仍为三类页面不变 | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
-| D29 | 界面构建与组件标准化：界面全部由 Rust 代码构建（无 `.ui` 模板、无 `CompositeTemplate`）；全部采用 libadwaita 原生组件与标准页面模式——页面为 `AdwPreferencesPage`，分组为 `AdwPreferencesGroup`，设备信息为 `AdwActionRow`（状态徽章置于行尾），操作入口为 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令），侧边栏导航为挂内置 `.navigation-sidebar` 类的 `GtkListBox`，设置对话框为 `AdwPreferencesDialog` + `AdwComboRow` | §4.11、§9 | §4.11 出现 `AdwPreferencesPage` 与 `AdwButtonRow`；`app-code-built-ui` 契约命中 |
+| D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染全部静态文案）；侧边栏导航为两类页面（D30 收敛） | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
+| D29 | 界面构建与组件标准化：界面全部由 Rust 代码构建（无 `.ui` 模板、无 `CompositeTemplate`）；全部采用 libadwaita 原生组件——侧边栏导航为挂内置 `.navigation-sidebar` 类的 `GtkListBox`，关于页为 `AdwPreferencesPage` + `AdwActionRow`，设置对话框为 `AdwPreferencesDialog` + `AdwComboRow` + `AdwButtonRow` | §4.11、§9 | §4.11 出现 `AdwPreferencesPage`；`app-code-built-ui` 契约命中 |
+| D30 | 导航收敛与概览卡片化：侧边栏导航收敛为两类页面（概览 / 关于），侧边栏品牌用原生 `AdwWindowTitle`（置于 flat `AdwHeaderBar`），主标题栏标题随当前页动态切换；诊断页移除，「导出工作日志」入口移入设置对话框（工作日志分组，`AdwButtonRow`）；概览页为 `AdwToastOverlay` + `AdwClamp` 卡片布局——设备卡（图标 + 产品名 + VID:PID + 行尾锁定徽章 + 信息行）与操作卡（解锁 / 校验口令主按钮 + 口令管理禁用组），成功结果附 `AdwToast` 瞬时提示 | §4.11、§9 | §4.11 出现「导出工作日志」与 `AdwToast`；锚点 `test_sidebar_navigation_items` 判据为 ≥ 2 |
 
 ## 10. 验证
 
