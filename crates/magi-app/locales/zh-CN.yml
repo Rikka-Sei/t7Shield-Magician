@@ -15,7 +15,7 @@ about:
   platform_title: "运行环境"
   repository_title: "协议参考"
   repository: "协议参考：t7Shield-protocol 仓库"
-  notice: "本工具只提供解锁与密码验证两项功能，不支持固件更新、安全擦除、性能测试等其他操作。"
+  notice: "本工具只提供解锁与密码验证两项设备操作，不提供固件更新、安全擦除、性能测试等其他功能。"
 
 app:
   title: "MagiShield"

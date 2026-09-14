@@ -163,11 +163,12 @@ mod imp {
         pub sidebar_toggle: gtk::ToggleButton,
         pub action_preferences: gtk::Button,
         pub window_title: adw::WindowTitle,
-        pub brand_label: gtk::Label,
+        pub sidebar_title: adw::WindowTitle,
         pub split_view: adw::OverlaySplitView,
         pub nav_list: gtk::ListBox,
         pub nav_labels: Vec<gtk::Label>,
         pub content_stack: gtk::Stack,
+        pub toast_overlay: adw::ToastOverlay,
         pub platform_group: adw::PreferencesGroup,
         pub platform_row: adw::ActionRow,
         pub device_group: adw::PreferencesGroup,
@@ -224,14 +225,14 @@ mod imp {
             header.set_title_widget(Some(&window_title));
             header.pack_end(&action_preferences);
 
-            // —— 侧边栏：品牌标题（内容首项，不叠加第二条标题栏）+ 导航列表 ——
-            let brand_label = gtk::Label::builder()
-                .xalign(0.0)
-                .halign(gtk::Align::Start)
-                .margin_top(6)
-                .margin_bottom(2)
-                .build();
-            brand_label.add_css_class("title-4");
+            // —— 侧边栏：原生 flat HeaderBar 品牌（关闭标题按钮绘制——macOS 下
+            // 避免与主标题栏重复渲染窗口控制圆点；尺寸由 libadwaita 统一）——
+            let sidebar_title = adw::WindowTitle::new("", "");
+            let sidebar_header = adw::HeaderBar::new();
+            sidebar_header.add_css_class("flat");
+            sidebar_header.set_show_start_title_buttons(false);
+            sidebar_header.set_show_end_title_buttons(false);
+            sidebar_header.set_title_widget(Some(&sidebar_title));
 
             let nav_list = gtk::ListBox::builder()
                 .selection_mode(gtk::SelectionMode::Single)
@@ -259,8 +260,11 @@ mod imp {
             sidebar_box.set_margin_bottom(12);
             sidebar_box.set_margin_start(12);
             sidebar_box.set_margin_end(12);
-            sidebar_box.append(&brand_label);
             sidebar_box.append(&nav_list);
+
+            let sidebar_view = adw::ToolbarView::new();
+            sidebar_view.add_top_bar(&sidebar_header);
+            sidebar_view.set_content(Some(&sidebar_box));
 
             // —— 页面栈：仪表盘 / 诊断 / 关于（每页一个 AdwPreferencesPage）——
             let content_stack = gtk::Stack::builder()
@@ -350,7 +354,10 @@ mod imp {
             feedback_group.add(&result_row);
             dashboard_page.add(&feedback_group);
 
-            content_stack.add_named(&dashboard_page, Some(NavItem::Dashboard.page_name()));
+            // Toast 承载层：成功结果的瞬时提示（libadwaita 特色，独立小步）。
+            let toast_overlay = adw::ToastOverlay::new();
+            toast_overlay.set_child(Some(&dashboard_page));
+            content_stack.add_named(&toast_overlay, Some(NavItem::Dashboard.page_name()));
 
             // 诊断页：只读记录卡片 + 脱敏导出入口。
             let diagnostics_view = gtk::TextView::builder()
@@ -397,7 +404,7 @@ mod imp {
             let split_view = adw::OverlaySplitView::builder()
                 .min_sidebar_width(240.0)
                 .max_sidebar_width(280.0)
-                .sidebar(&sidebar_box)
+                .sidebar(&sidebar_view)
                 .content(&content_stack)
                 .build();
 
@@ -410,11 +417,12 @@ mod imp {
                 sidebar_toggle,
                 action_preferences,
                 window_title,
-                brand_label,
+                sidebar_title,
                 split_view,
                 nav_list,
                 nav_labels,
                 content_stack,
+                toast_overlay,
                 platform_group,
                 platform_row,
                 device_group,
@@ -533,8 +541,8 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.window_title.set_title(&t!("app.title"));
-        imp.brand_label.set_label(&t!("app.title"));
+        imp.sidebar_title.set_title(&t!("app.title"));
+        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
@@ -851,6 +859,8 @@ impl MainWindow {
                 imp.result_icon.add_css_class("success");
                 imp.result_icon.set_icon_name(Some("emblem-ok-symbolic"));
                 imp.result_icon.set_visible(true);
+                // 成功结果附 Toast 瞬时提示（libadwaita 特色）。
+                imp.toast_overlay.add_toast(adw::Toast::new(text));
             }
             Outcome::Error => {
                 imp.result_label.add_css_class("error");
@@ -909,6 +919,7 @@ impl MainWindow {
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
+        imp.window_title.set_title(&t!(item.label_key()));
         let index = NavItem::ALL
             .iter()
             .position(|candidate| *candidate == item)
@@ -1129,8 +1140,8 @@ impl MainWindow {
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.window_title.set_title(&t!("app.title"));
-        imp.brand_label.set_label(&t!("app.title"));
+        imp.sidebar_title.set_title(&t!("app.title"));
+        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
         for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
