@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 12,
   "decision_prefix": "D",
-  "latest_decision": 27,
+  "latest_decision": 28,
   "decisions": [
     {
       "decision_id": "D01",
@@ -1011,6 +1011,56 @@
           "reason": "macOS 驱动扩展通路不得作为目标表述（§1.3 排除性提及经白名单豁免）"
         }
       ]
+    },
+    {
+      "decision_id": "D28",
+      "required_terms": [],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D28",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D28 条目"
+        },
+        {
+          "pattern": "首选项",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "HeaderBar 首选项入口契约必须落位 §4.11"
+        },
+        {
+          "pattern": "设置",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "设置对话框契约必须落位 §4.11"
+        },
+        {
+          "pattern": "语言优先级",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
+          "reason": "语言优先级链必须写明在国际化 NFR"
+        }
+      ],
+      "forbidden_occurrences": []
     }
   ],
   "code_contracts": [
