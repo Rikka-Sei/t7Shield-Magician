@@ -84,7 +84,6 @@ result:
   cancelled: "Cancelled"
   mounted: "(mounted at %{volumes})"
 password:
-  title: "Enter password"
   body: "The password is used only for this operation and is wiped from memory right after you submit it. It is never logged, copied to the clipboard, or written to disk."
   placeholder: "Password"
   submit: "Submit"
@@ -93,12 +92,10 @@ password:
 platform:
   linux_notice: "This tool talks to the drive through Linux's SCSI generic interface. If access is denied, grant yourself read/write permission on the device node (this tool never asks for root)."
 issue:
-  password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
+  title: "Diagnostics log export"
   view_title: "Diagnostics log"
   hint: "Records are kept in memory only (512 entries max), never written to disk, and passwords are filtered out again before export."
-  empty: "No records yet"
-  title: "Diagnostics log export"
   redacted_note: "Redacted: password content, length, and hex forms are filtered out"
   entry_count: "Entries"
   export_failed: "Failed to export the diagnostics log: the target file could not be written"

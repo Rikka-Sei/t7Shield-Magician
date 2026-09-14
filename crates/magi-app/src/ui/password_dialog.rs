@@ -189,11 +189,6 @@ impl PasswordDialog {
         self.imp().entry.grab_focus();
     }
 
-    /// 清空输入框（重新打开对话框时调用：不残留上一次输入）。
-    pub fn reset(&self) {
-        self.imp().entry.set_text("");
-        self.imp().error_label.set_label("");
-    }
 }
 
 #[cfg(test)]

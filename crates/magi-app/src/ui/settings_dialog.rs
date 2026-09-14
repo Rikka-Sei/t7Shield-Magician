@@ -219,8 +219,4 @@ impl SettingsDialog {
         });
     }
 
-    /// 当前设置快照（主窗口启动时装配初始态用）。
-    pub fn settings(&self) -> Settings {
-        *self.imp().settings.borrow()
-    }
 }

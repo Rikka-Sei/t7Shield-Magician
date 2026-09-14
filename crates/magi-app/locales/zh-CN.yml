@@ -83,7 +83,6 @@ result:
   cancelled: "已取消"
   mounted: "（挂载位置：%{volumes}）"
 password:
-  title: "输入密码"
   body: "密码只用于本次操作，提交后立即从内存清除：不写日志、不复制到剪贴板、不保存到磁盘。"
   placeholder: "密码"
   submit: "提交"
@@ -92,11 +91,9 @@ password:
 platform:
   linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。如遇权限不足，请自行授予设备节点的读写权限（本工具不会请求管理员权限）。"
 issue:
-  password_write_gap: "issues/2026-09-14-口令写操作证据缺口.md"
 diagnostics:
   view_title: "诊断日志"
   hint: "记录仅保存在内存中（最多 512 条），不写入磁盘，导出前会再次过滤密码信息。"
-  empty: "暂无记录"
   title: "诊断日志导出"
   redacted_note: "已脱敏：密码内容、长度与十六进制形式均已过滤"
   entry_count: "记录条数"
