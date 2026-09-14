@@ -38,12 +38,19 @@
           gsettings-desktop-schemas
         ];
 
-        # 仅 Linux 需要：图标主题、GIO 扩展模块。
-        gtkRuntimeDeps = lib.optionals stdenv.hostPlatform.isLinux (with pkgs; [
+        # 图标主题：两平台 devShell 一致提供。缺失时 GtkIconTheme 只能命中 GTK4 内置
+        # fallback 图标（view-grid/view-list 等），help-about-symbolic 等主题图标解析
+        # 失败，导航行显示破损图片占位符。
+        gtkIconThemeDeps = with pkgs; [
           adwaita-icon-theme
           hicolor-icon-theme
-          glib-networking
-        ]);
+        ];
+
+        # 仅 Linux 需要：GIO 扩展模块。
+        gtkRuntimeDeps = gtkIconThemeDeps
+          ++ lib.optionals stdenv.hostPlatform.isLinux (with pkgs; [
+            glib-networking
+          ]);
 
         # 开发期工具：spec 审计/屏障脚本、任务运行器、代码检索。
         # python3 必须来自 nixpkgs：darwin 上 stdenv 会导出 DEVELOPER_DIR/SDKROOT（apple-sdk），
@@ -70,17 +77,21 @@
           export GSETTINGS_SCHEMA_DIR=${lib.concatStringsSep ":" gtkSchemaDirs}''${GSETTINGS_SCHEMA_DIR:+:$GSETTINGS_SCHEMA_DIR}
         '';
 
-        # 仅 Linux 需要导出的 GTK 运行时变量（dconf schema 搜索路径、GIO 扩展模块、
-        # GDK 后端）。macOS 下 GTK/libadwaita 同样来自 nixpkgs，但 XDG 目录与 GIO
-        # 模块走系统约定，覆盖这些变量反而会破坏系统行为，因此只在该平台导出。
-        gtkRuntimeHook = lib.optionalString stdenv.hostPlatform.isLinux ''
+        # XDG_DATA_DIRS 两平台一致导出：GTK 的图标检索走该变量。此前仅 Linux 导出，
+        # darwin devShell 里 adwaita-icon-theme 虽在 buildInputs 也不进搜索路径，
+        # help-about-symbolic 等主题图标全部解析失败（Phase 1 探针 has_icon=NO 实证）。
+        gtkIconThemeHook = ''
           export XDG_DATA_DIRS=${lib.makeSearchPath "share" [
             pkgs.gsettings-desktop-schemas
             pkgs.gtk4
             pkgs.adwaita-icon-theme
             pkgs.hicolor-icon-theme
           ]}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}
+        '';
 
+        # 仅 Linux 需要导出的其余 GTK 运行时变量（GIO 扩展模块、GDK 后端）。
+        # macOS 下 GIO 模块与显示后端走系统约定，覆盖反而破坏系统行为。
+        gtkRuntimeHook = lib.optionalString stdenv.hostPlatform.isLinux ''
           export GIO_EXTRA_MODULES=${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}
 
           export GDK_BACKEND=''${GDK_BACKEND:-wayland,x11}
@@ -152,6 +163,7 @@
             echo "  adw:   $(pkg-config --modversion libadwaita-1 2>/dev/null || echo '未找到')"
             ${gtkSchemaHook}
             ${gtkRuntimeHook}
+            ${gtkIconThemeHook}
           '';
         };
 
