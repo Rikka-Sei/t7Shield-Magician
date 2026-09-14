@@ -1,9 +1,8 @@
-//! 设置对话框（D28/D29/D30：界面由 Rust 代码构建，使用 libadwaita 原生组件）。
+//! D28 设置对话框（D29：界面由 Rust 代码构建，使用 libadwaita 原生组件）。
 //!
-//! 三组能力：
-//! - 外观（`AdwComboRow` × 2）：主题与语言两组三态，更改即时生效并持久化——
-//!   主题经 [`crate::ui::apply_theme`]，语言经 `rust_i18n::set_locale` 与双向 `relocalize()`；
-//! - 工作日志（`AdwButtonRow`）：脱敏导出入口（D30：原诊断页移除后唯一的日志出口）。
+//! 主题与语言两组三态选择（`AdwComboRow`），更改即时生效并持久化：
+//! - 主题 → [`crate::ui::apply_theme`]（`AdwStyleManager`）；
+//! - 语言 → `rust_i18n::set_locale` + 对话框自身与主窗口 `relocalize()`。
 //!
 //! 候选项文案经 `gtk::StringList` + `t!()` 在本模块构造（AC-015：不内联可显示字符串）。
 
@@ -28,8 +27,6 @@ mod imp {
         pub appearance_group: adw::PreferencesGroup,
         pub theme_row: adw::ComboRow,
         pub language_row: adw::ComboRow,
-        pub diagnostics_group: adw::PreferencesGroup,
-        pub export_row: adw::ButtonRow,
         pub(crate) settings: RefCell<Settings>,
         pub(crate) window: RefCell<Option<glib::WeakRef<MainWindow>>>,
         /// 装配期间屏蔽 notify::selected 回调（初始 selected 写入不应触发持久化）。
@@ -43,20 +40,13 @@ mod imp {
             let appearance_group = adw::PreferencesGroup::new();
             appearance_group.add(&theme_row);
             appearance_group.add(&language_row);
-            let export_row = adw::ButtonRow::new();
-            export_row.set_start_icon_name(Some("document-save-symbolic"));
-            let diagnostics_group = adw::PreferencesGroup::new();
-            diagnostics_group.add(&export_row);
             let page = adw::PreferencesPage::new();
             page.add(&appearance_group);
-            page.add(&diagnostics_group);
             Self {
                 page,
                 appearance_group,
                 theme_row,
                 language_row,
-                diagnostics_group,
-                export_row,
                 settings: RefCell::new(Settings::default()),
                 window: RefCell::new(None),
                 loading: Cell::new(false),
@@ -164,7 +154,6 @@ impl SettingsDialog {
             .set_selected(language_index(settings.language));
         dialog.imp().loading.set(false);
         dialog.connect_rows();
-        dialog.connect_export();
         dialog
     }
 
@@ -175,9 +164,6 @@ impl SettingsDialog {
         imp.appearance_group.set_title(&t!("settings.group"));
         imp.theme_row.set_title(&t!("settings.theme"));
         imp.language_row.set_title(&t!("settings.language"));
-        imp.diagnostics_group
-            .set_title(&t!("settings.diagnostics_title"));
-        imp.export_row.set_title(&t!("action.export_diagnostics"));
         let theme = theme_from_index(imp.theme_row.selected());
         let language = language_from_index(imp.language_row.selected());
         imp.loading.set(true);
@@ -194,22 +180,6 @@ impl SettingsDialog {
         ])));
         imp.language_row.set_selected(language_index(language));
         imp.loading.set(false);
-    }
-
-    /// 导出工作日志（D30：设置对话框内的唯一日志出口，脱敏后落盘）。
-    fn connect_export(&self) {
-        let dialog = self.clone();
-        self.imp().export_row.connect_activated(move |_| {
-            let window = dialog
-                .imp()
-                .window
-                .borrow()
-                .as_ref()
-                .and_then(|weak| weak.upgrade());
-            if let Some(window) = window {
-                window.export_diagnostics();
-            }
-        });
     }
 
     /// 选择回调：即时应用 + 持久化 + 主窗口重渲染（装配期屏蔽）。

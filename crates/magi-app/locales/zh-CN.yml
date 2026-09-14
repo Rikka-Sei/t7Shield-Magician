@@ -2,6 +2,7 @@
 # 约定：所有用户可见文案只在此处与 en.yml 出现，代码内不内联可显示字符串（AC-015）。
 nav:
   dashboard: "概览"
+  diagnostics: "诊断"
   about: "关于"
   toggle_sidebar: "切换侧边栏"
 
@@ -44,10 +45,9 @@ action:
   change_password: "修改密码"
   delete_password: "删除密码"
   cancel: "取消"
-  export_diagnostics: "导出工作日志"
+  export_diagnostics: "导出诊断"
   preferences: "设置"
 settings:
-  diagnostics_title: "工作日志"
   title: "设置"
   group: "界面"
   theme: "主题"
@@ -92,6 +92,8 @@ platform:
   linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。如遇权限不足，请自行授予设备节点的读写权限（本工具不会请求管理员权限）。"
 issue:
 diagnostics:
+  view_title: "诊断日志"
+  hint: "记录仅保存在内存中（最多 512 条），不写入磁盘，导出前会再次过滤密码信息。"
   title: "诊断日志导出"
   redacted_note: "已脱敏：密码内容、长度与十六进制形式均已过滤"
   entry_count: "记录条数"

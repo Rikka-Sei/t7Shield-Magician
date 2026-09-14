@@ -3,6 +3,7 @@
 # inline displayable strings (AC-015).
 nav:
   dashboard: "Overview"
+  diagnostics: "Diagnostics"
   about: "About"
   toggle_sidebar: "Toggle sidebar"
 
@@ -45,10 +46,9 @@ action:
   change_password: "Change password"
   delete_password: "Remove password"
   cancel: "Cancel"
-  export_diagnostics: "Export work log"
+  export_diagnostics: "Export diagnostics"
   preferences: "Settings"
 settings:
-  diagnostics_title: "Work log"
   title: "Settings"
   group: "Interface"
   theme: "Theme"
@@ -94,6 +94,8 @@ platform:
 issue:
 diagnostics:
   title: "Diagnostics log export"
+  view_title: "Diagnostics log"
+  hint: "Records are kept in memory only (512 entries max), never written to disk, and passwords are filtered out again before export."
   redacted_note: "Redacted: password content, length, and hex forms are filtered out"
   entry_count: "Entries"
   export_failed: "Failed to export the diagnostics log: the target file could not be written"
