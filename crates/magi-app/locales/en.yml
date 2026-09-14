@@ -5,8 +5,11 @@ nav:
   dashboard: "Dashboard"
   diagnostics: "Diagnostics"
   about: "About"
+  toggle_sidebar: "Toggle Sidebar"
 dashboard:
   title: "Overview"
+  actions_title: "Actions"
+  feedback_title: "Progress & Result"
 about:
   version: "Version %{version}"
   repository: "Protocol reference: the t7Shield-protocol repository (byte-level A-path contract)"
@@ -25,6 +28,9 @@ device:
   descriptor_uas: "Alternate setting proto 0x62 (UAS)"
   descriptor_endpoints: "Endpoints"
   descriptor_other: "Alternate setting proto %{proto}"
+  channel_title: "Transport channel"
+  descriptor_title: "USB alternate setting"
+  empty_hint: "Connect a Samsung Portable SSD T7 Shield and it will be detected automatically."
 status:
   locked: "Locked"
   unlocked: "Unlocked"

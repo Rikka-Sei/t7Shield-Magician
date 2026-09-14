@@ -2,6 +2,8 @@
 //!
 //! 结构全部来自 `ui/main_window.ui`（K5：`.ui` 只放 id/class，文案零字面量），本文件只做
 //! 文案赋值、入口敏感度刷新与流程装配；协议 I/O 一律经 [`crate::jobs`] 在工作线程执行。
+//! 布局全部使用 libadwaita/GTK 原生组件与内置样式类（D28：零自定义 CSS）；结果区经
+//! [`Outcome`] 语义分级（success/error 内置类 + symbolic 图标）统一呈现。
 //!
 //! 主流程（§4.13）：启动即扫描设备 → 更新设备卡片/状态/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
@@ -77,6 +79,36 @@ pub fn badge_class(identity: DeviceIdentity) -> &'static str {
         DeviceIdentity::ReEnumerating | DeviceIdentity::Unrecognized => "dim-label",
     }
 }
+/// 结果区语义分级（内置类）：中性（默认文本，无图标）、成功（success + emblem-ok）、
+/// 错误（error + dialog-warning）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    Neutral,
+    Success,
+    Error,
+}
+
+/// 结果键 → 语义分级：判据确认/口令被接受为成功；其余（含取消、未观察到重枚举）为中性。
+pub(crate) fn result_kind(key: &str) -> Outcome {
+    match key {
+        "result.RealPartitionTable" | "result.LockingFlags" | "result.validate_accepted" => {
+            Outcome::Success
+        }
+        "diagnostics.export_failed" => Outcome::Error,
+        _ => Outcome::Neutral,
+    }
+}
+
+/// 徽章图标（语义与徽章类一一对应，全部为 Adwaita 图标主题自带 symbolic 图标）。
+pub(crate) fn status_icon_name(identity: DeviceIdentity) -> &'static str {
+    match identity {
+        DeviceIdentity::Locked => "changes-prevent-symbolic",
+        DeviceIdentity::Unlocked => "emblem-ok-symbolic",
+        DeviceIdentity::ReEnumerating => "view-refresh-symbolic",
+        DeviceIdentity::Unrecognized => "dialog-question-symbolic",
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
     gate: UnlockGate,
@@ -165,6 +197,32 @@ mod imp {
         pub action_cancel: TemplateChild<gtk::Button>,
         #[template_child]
         pub action_export_diagnostics: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub split_view: TemplateChild<adw::OverlaySplitView>,
+        #[template_child]
+        pub sidebar_toggle: TemplateChild<gtk::ToggleButton>,
+        #[template_child]
+        pub device_area_stack: TemplateChild<gtk::Stack>,
+        #[template_child]
+        pub empty_state: TemplateChild<adw::StatusPage>,
+        #[template_child]
+        pub status_icon: TemplateChild<gtk::Image>,
+        #[template_child]
+        pub result_icon: TemplateChild<gtk::Image>,
+        #[template_child]
+        pub progress_box: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub password_admin_note: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub actions_caption: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub feedback_caption: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub device_node_caption: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub device_channel_caption: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub device_descriptor_caption: TemplateChild<gtk::Label>,
         #[template_child]
         pub platform_notice_label: TemplateChild<gtk::Label>,
         pub(crate) state: RefCell<WindowState>,
@@ -279,6 +337,29 @@ impl MainWindow {
         imp.sidebar_notice_label.set_label(&t!("app.subtitle"));
         imp.device_group_title.set_label(&t!("device.group_title"));
         imp.device_model_label.set_label(&t!("device.model"));
+        imp.device_node_caption.set_label(&t!("device.node"));
+        imp.device_channel_caption.set_label(&t!("device.channel_title"));
+        imp.device_descriptor_caption
+            .set_label(&t!("device.descriptor_title"));
+        imp.actions_caption.set_label(&t!("dashboard.actions_title"));
+        imp.feedback_caption.set_label(&t!("dashboard.feedback_title"));
+        imp.password_admin_note.set_label(&t!("reason.evidence_gap"));
+        imp.empty_state
+            .set_title(&t!(DeviceIdentity::Unrecognized.status_key()));
+        imp.empty_state
+            .set_description(Some(&t!("device.empty_hint")));
+        imp.sidebar_toggle
+            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
+        // 窄窗口折叠时才显示侧边栏开关；开关与 show-sidebar 双向同步（原生绑定）。
+        imp.split_view
+            .bind_property("collapsed", &imp.sidebar_toggle.get(), "visible")
+            .sync_create()
+            .build();
+        imp.sidebar_toggle
+            .bind_property("active", &imp.split_view.get(), "show-sidebar")
+            .bidirectional()
+            .sync_create()
+            .build();
         for action in ActionId::ALL {
             if let Some(button) = self.action_button(action) {
                 button.set_label(&t!(action.label_key()));
@@ -287,8 +368,7 @@ impl MainWindow {
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_export_diagnostics
             .set_label(&t!("action.export_diagnostics"));
-        imp.progress.set_fraction(0.0);
-        imp.result_label.set_label(&t!("progress.idle"));
+        self.show_outcome(&t!("progress.idle"), Outcome::Neutral);
         self.show_unknown_device();
         self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
     }
@@ -433,6 +513,7 @@ impl MainWindow {
     /// 设备卡片（§4.12：型号、VID:PID、设备节点、锁定状态、描述符摘要）。
     fn show_hit(&self, hit: &ScanHit) {
         let imp = self.imp();
+        imp.device_area_stack.set_visible_child_name("card");
         imp.status_label
             .set_label(&t!(hit.job.identity.status_key()));
         self.set_badge_class(hit.job.identity);
@@ -443,9 +524,10 @@ impl MainWindow {
             hit.job.vid,
             hit.job.pid
         ));
+        // 节点值单独成行，前缀说明由 `device_node_caption` 承担（§4.12）。
         imp.device_node_label.set_label(&match &hit.job.node {
-            Some(node) => format!("{} {node}", t!("device.node")),
-            None => t!("device.node").to_string(),
+            Some(node) => node.to_string(),
+            None => String::new(),
         });
         imp.device_channel_label.set_label(&t!("device.channel"));
         imp.device_descriptor_label
@@ -455,6 +537,7 @@ impl MainWindow {
     /// 设备卡片空态（§4.1：不识别为 T7 Shield，入口保持禁用）。
     fn show_unknown_device(&self) {
         let imp = self.imp();
+        imp.device_area_stack.set_visible_child_name("empty");
         imp.status_label
             .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
         self.set_badge_class(DeviceIdentity::Unrecognized);
@@ -467,13 +550,16 @@ impl MainWindow {
 
     /// 状态徽章配色（锁定态醒目暖色、解锁态绿色、其余中性）。
     fn set_badge_class(&self, identity: DeviceIdentity) {
-        let label = self.imp().status_label.get();
+        let imp = self.imp();
         for class in ["warning", "success", "dim-label"] {
-            label.remove_css_class(class);
+            imp.status_label.remove_css_class(class);
+            imp.status_icon.remove_css_class(class);
         }
-        label.add_css_class(badge_class(identity));
+        let class = badge_class(identity);
+        imp.status_label.add_css_class(class);
+        imp.status_icon.add_css_class(class);
+        imp.status_icon.set_icon_name(Some(status_icon_name(identity)));
     }
-
     /// 平台说明文案（D27：Linux 通道说明）。
     pub fn show_platform_notice(&self) {
         let text = t!("platform.linux_notice").to_string();
@@ -488,16 +574,43 @@ impl MainWindow {
             .position(|candidate| *candidate == step)
             .map(|index| (index + 1) as f64)
             .unwrap_or(0.0);
+        self.imp().progress_box.set_visible(true);
         self.imp().progress.set_fraction(done / total);
         self.imp()
             .result_label
             .set_label(&t!(format!("progress.{step}")));
     }
 
+    /// 结果区统一呈现（§4.12/§6）：文本 + 语义类 + 图标；进度条随结果/错误隐藏。
+    pub(crate) fn show_outcome(&self, text: &str, kind: Outcome) {
+        let imp = self.imp();
+        for class in ["success", "error", "dim-label"] {
+            imp.result_label.remove_css_class(class);
+            imp.result_icon.remove_css_class(class);
+        }
+        imp.result_label.set_label(text);
+        match kind {
+            Outcome::Neutral => imp.result_icon.set_visible(false),
+            Outcome::Success => {
+                imp.result_label.add_css_class("success");
+                imp.result_icon.add_css_class("success");
+                imp.result_icon.set_icon_name(Some("emblem-ok-symbolic"));
+                imp.result_icon.set_visible(true);
+            }
+            Outcome::Error => {
+                imp.result_label.add_css_class("error");
+                imp.result_icon.add_css_class("error");
+                imp.result_icon.set_icon_name(Some("dialog-warning-symbolic"));
+                imp.result_icon.set_visible(true);
+            }
+        }
+        imp.progress.set_fraction(0.0);
+        imp.progress_box.set_visible(false);
+    }
+
     /// 结果文案（§4.8 判据分级 / 取消 / 校验结论）。
     pub fn show_result(&self, message_key: &'static str) {
-        self.imp().result_label.set_label(&t!(message_key));
-        self.imp().progress.set_fraction(0.0);
+        self.show_outcome(&t!(message_key), result_kind(message_key));
     }
 
     /// 错误呈现：呈现码 + 一句原因 + 一句建议（§4.13）。
@@ -508,8 +621,7 @@ impl MainWindow {
             t!(presentation::reason_key(error)),
             t!(presentation::advice_key(error)),
         );
-        self.imp().result_label.set_label(&text);
-        self.imp().progress.set_fraction(0.0);
+        self.show_outcome(&text, Outcome::Error);
         diagnostics::ring().record(Level::Error, code);
         text
     }
@@ -678,8 +790,7 @@ impl MainWindow {
                     t!(key),
                     t!("result.mounted", volumes = mounted.join(", "))
                 );
-                self.imp().result_label.set_label(&text);
-                self.imp().progress.set_fraction(0.0);
+                self.show_outcome(&text, Outcome::Success);
             }
         }
         // §3.3：会话收尾后必须重新读取设备态再裁决呈现。
@@ -748,6 +859,12 @@ mod tests {
             "action_unlock",
             "progress",
             "result_label",
+            "device_area_stack",
+            "empty_state",
+            "progress_box",
+            "status_icon",
+            "result_icon",
+            "sidebar_toggle",
         ] {
             assert!(
                 ids.contains(&required.to_string()),
