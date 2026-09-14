@@ -504,7 +504,7 @@ impl MainWindow {
     /// 构造主窗口：构建界面树、装配文案与初始入口状态。
     pub fn new() -> Self {
         let window: Self = glib::Object::new();
-        window.set_default_size(1024, 680);
+        window.set_default_size(794, 530);
         window.setup();
         window
     }
