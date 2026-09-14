@@ -29,7 +29,11 @@ use rust_i18n::t;
 
 use crate::controller::{ActionId, DeviceIdentity, RescanAction, RescanState, UnlockGate};
 use crate::diagnostics::{self, Level};
+use crate::environment::{
+    self, EnvironmentAction, EnvironmentEvent, EnvironmentState, next_environment_state,
+};
 use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
+use crate::ui::environment_dialog::EnvironmentDialog;
 use crate::ui::password_dialog::PasswordDialog;
 use crate::presentation::{self, AppError, AppEvent};
 
@@ -138,6 +142,29 @@ enum StoredOutcome {
     Error(AppError),
 }
 
+/// 主窗口默认尺寸裁决（D31）：按窗口所在显示器的工作区推导，含上下限；不写死像素常数。
+///
+/// 比例与上下限是呈现细节（spec 不落数值）：宽取工作区宽度的 3/5（夹逼 720–1200），
+/// 高取工作区高度的 7/10（夹逼 600–900）。同一工作区恒定同尺寸，显示密度/字体缩放
+/// 差异由「相对工作区」而非绝对像素吸收；无显示器（无头环境）由调用方回落。
+pub fn compute_default_size(workarea: (i32, i32)) -> (i32, i32) {
+    let width = (workarea.0 * 3 / 5).clamp(720, 1200);
+    let height = (workarea.1 * 7 / 10).clamp(600, 900);
+    (width, height)
+}
+
+/// 当前显示器的工作区尺寸（无头环境返回 None）。
+fn current_workarea() -> Option<(i32, i32)> {
+    let display = gtk::gdk::Display::default()?;
+    // GDK4 无 primary 概念（Wayland），取显示器列表首项作为推导基准。
+    let monitor = display
+        .monitors()
+        .item(0)
+        .and_then(|object| object.downcast::<gtk::gdk::Monitor>().ok())?;
+    let geometry = monitor.geometry();
+    Some((geometry.width(), geometry.height()))
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct WindowState {
     gate: UnlockGate,
@@ -152,6 +179,12 @@ pub(crate) struct WindowState {
     last_hit: Option<ScanHit>,
     /// 打开中的口令对话框（语言切换时同步重渲染）。
     open_dialog: Option<glib::WeakRef<PasswordDialog>>,
+    /// 打开中的引导向导（环境状态迁移时刷新问题清单）。
+    open_environment_dialog: Option<glib::WeakRef<EnvironmentDialog>>,
+    /// 环境就绪状态机当前态（§4.13）。
+    environment: EnvironmentState,
+    /// 启动自动装载是否已用掉（§4.13 纪律：每次启动至多一次）。
+    auto_load_used: bool,
 }
 
 mod imp {
@@ -162,6 +195,7 @@ mod imp {
         pub root: adw::ToolbarView,
         pub sidebar_toggle: gtk::ToggleButton,
         pub action_preferences: gtk::Button,
+        pub environment_pill: gtk::Button,
         pub window_title: adw::WindowTitle,
         pub sidebar_title: gtk::Label,
         pub split_view: adw::OverlaySplitView,
@@ -220,10 +254,19 @@ mod imp {
             let action_preferences = gtk::Button::builder()
                 .icon_name("emblem-system-symbolic")
                 .build();
+            // 环境胶囊（D30）：警示色（warning 调色 + suggested-action 背景），
+            // 环境问题存在时呈现；问题清单与修复动作在引导向导中。
+            let environment_pill = gtk::Button::builder()
+                .icon_name("dialog-warning-symbolic")
+                .visible(false)
+                .build();
+            environment_pill.add_css_class("suggested-action");
+            environment_pill.add_css_class("warning");
             let header = adw::HeaderBar::new();
             header.pack_start(&sidebar_toggle);
             header.set_title_widget(Some(&window_title));
             header.pack_end(&action_preferences);
+            header.pack_end(&environment_pill);
 
             // —— 侧边栏：原生 flat HeaderBar 品牌（关闭标题按钮绘制——macOS 下
             // 避免与主标题栏重复渲染窗口控制圆点；尺寸由 libadwaita 统一）——
@@ -418,6 +461,7 @@ mod imp {
                 root,
                 sidebar_toggle,
                 action_preferences,
+                environment_pill,
                 window_title,
                 sidebar_title,
                 split_view,
@@ -504,7 +548,11 @@ impl MainWindow {
     /// 构造主窗口：构建界面树、装配文案与初始入口状态。
     pub fn new() -> Self {
         let window: Self = glib::Object::new();
-        window.set_default_size(794, 530);
+        // D31：默认尺寸按显示器工作区推导；无头环境（测试）回落 1024×700。
+        let (width, height) = current_workarea()
+            .map(compute_default_size)
+            .unwrap_or((1024, 700));
+        window.set_default_size(width, height);
         window.setup();
         window
     }
@@ -535,6 +583,7 @@ impl MainWindow {
         let this = self.clone();
         jobs::set_event_sink(move |event| this.on_event(event));
         self.connect_actions();
+        self.start_environment_bootstrap();
         self.refresh_devices();
         self.refresh_actions();
         self.spawn_device_watch();
@@ -592,6 +641,10 @@ impl MainWindow {
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
+        imp.environment_pill
+            .set_label(&t!("environment.pill_label"));
+        imp.environment_pill
+            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
         imp.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
         // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
@@ -638,6 +691,12 @@ impl MainWindow {
             #[weak]
             this,
             move |_| this.present_preferences()
+        ));
+        let this = self.clone();
+        imp.environment_pill.connect_clicked(glib::clone!(
+            #[weak]
+            this,
+            move |_| this.present_environment_dialog()
         ));
         let this = self.clone();
         imp.nav_list.connect_row_selected(glib::clone!(
@@ -950,6 +1009,120 @@ impl MainWindow {
         dialog.present(Some(self));
     }
 
+    /// 环境就绪引导装配（§4.13）：启动自检 → 状态机裁决 → 胶囊/装载动作。
+    fn start_environment_bootstrap(&self) {
+        let report = environment::inspect_environment();
+        self.apply_environment_event(EnvironmentEvent::CheckDone(report));
+    }
+
+    /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（胶囊显隐 / 工作线程装载）。
+    fn apply_environment_event(&self, event: EnvironmentEvent) {
+        let is_user_retry = matches!(event, EnvironmentEvent::LoadRequested);
+        let (next, action) = {
+            let mut state = self.state().borrow_mut();
+            let (next, action) = next_environment_state(state.environment.clone(), event);
+            state.environment = next.clone();
+            (next, action)
+        };
+        let action = match action {
+            // 纪律：自动装载（启动自检路径）每次启动至多一次；用户在向导中的
+            // 显式重试不受限。复检路径再次产出装载动作时转为呈现问题。
+            EnvironmentAction::LoadModule if !is_user_retry => {
+                let mut state = self.state().borrow_mut();
+                if state.auto_load_used {
+                    if let EnvironmentState::Loading(issues) = &next {
+                        state.environment = EnvironmentState::Issue(issues.clone());
+                    }
+                    EnvironmentAction::ShowPill
+                } else {
+                    state.auto_load_used = true;
+                    EnvironmentAction::LoadModule
+                }
+            }
+            other => other,
+        };
+        match action {
+            EnvironmentAction::None => {}
+            EnvironmentAction::ShowPill => self.imp().environment_pill.set_visible(true),
+            EnvironmentAction::HidePill => self.imp().environment_pill.set_visible(false),
+            EnvironmentAction::LoadModule => self.spawn_module_load(),
+        }
+        self.refresh_environment_dialog();
+    }
+
+    /// 模块装载（§4.13）：固定命令 `pkexec modprobe sg` 在工作线程执行（单飞由
+    /// 状态机保证：Loading 态拒绝并发 LoadRequested）；结果回主线程复检一轮。
+    fn spawn_module_load(&self) {
+        let (sender, receiver) = async_channel::unbounded::<bool>();
+        std::thread::spawn(move || {
+            let argv = environment::module_load_command();
+            let ok = std::process::Command::new(argv[0])
+                .args(&argv[1..])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+            let _ = sender.send_blocking(ok);
+        });
+        let this = self.clone();
+        glib::MainContext::default().spawn_local(async move {
+            if let Ok(ok) = receiver.recv().await {
+                this.apply_environment_event(if ok {
+                    EnvironmentEvent::LoadSucceeded
+                } else {
+                    EnvironmentEvent::LoadFailed
+                });
+                // 收尾后统一复检：成功 → Ready；失败 → 问题清单刷新（仍是 Issue/LoadFailed）。
+                let report = environment::inspect_environment();
+                this.apply_environment_event(EnvironmentEvent::CheckDone(report));
+            }
+        });
+    }
+
+    /// 当前问题清单与装载在飞标记的呈现快照。
+    fn environment_snapshot(&self) -> (Vec<environment::EnvironmentIssue>, bool) {
+        let state = self.state().borrow();
+        match &state.environment {
+            EnvironmentState::Issue(issues) | EnvironmentState::LoadFailed(issues) => {
+                (issues.clone(), false)
+            }
+            EnvironmentState::Loading(issues) => (issues.clone(), true),
+            _ => (Vec::new(), false),
+        }
+    }
+
+    /// 打开引导向导（D30）：问题清单快照 + 装载状态；迁移时经弱引用刷新。
+    fn present_environment_dialog(&self) {
+        let (issues, loading) = self.environment_snapshot();
+        let dialog = EnvironmentDialog::new(self, &issues, loading);
+        self.state().borrow_mut().open_environment_dialog = Some(dialog.downgrade());
+        dialog.present(Some(self));
+    }
+
+    /// 向导打开期间的状态迁移刷新（§4.13）。
+    fn refresh_environment_dialog(&self) {
+        let dialog = self
+            .state()
+            .borrow()
+            .open_environment_dialog
+            .as_ref()
+            .and_then(|weak| weak.upgrade());
+        if let Some(dialog) = dialog {
+            let (issues, loading) = self.environment_snapshot();
+            dialog.reload(&issues, loading);
+        }
+    }
+
+    /// 引导向导「装载内核模块」入口（§4.13：用户显式触发，单飞由状态机兜底）。
+    pub fn environment_load_requested(&self) {
+        self.apply_environment_event(EnvironmentEvent::LoadRequested);
+    }
+
+    /// 引导向导「重新检查」入口（§4.13）。
+    pub fn environment_recheck_requested(&self) {
+        let report = environment::inspect_environment();
+        self.apply_environment_event(EnvironmentEvent::CheckDone(report));
+    }
+
     /// 入口行（按 `ActionId` 取操作分组的 `AdwButtonRow`）。
     pub fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow> {
         let imp = self.imp();
@@ -1182,6 +1355,10 @@ impl MainWindow {
         imp.action_cancel.set_label(&t!("action.cancel"));
         imp.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
+        imp.environment_pill
+            .set_label(&t!("environment.pill_label"));
+        imp.environment_pill
+            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
         imp.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
         // 设备分组重放：有缓存命中按新语言重渲染（不走 refresh_devices——
@@ -1221,6 +1398,15 @@ impl MainWindow {
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = dialog {
+            dialog.relocalize();
+        }
+        let env_dialog = self
+            .state()
+            .borrow()
+            .open_environment_dialog
+            .as_ref()
+            .and_then(|weak| weak.upgrade());
+        if let Some(dialog) = env_dialog {
             dialog.relocalize();
         }
     }
@@ -1300,6 +1486,62 @@ mod tests {
             count += 1;
         }
         count
+    }
+
+    /// 锚点（§10）：窗口默认尺寸随工作区推导、含上下限（D31）。
+    #[test]
+    fn test_window_size_scales_with_workarea() {
+        // 单调：更大的工作区给出更大的默认窗口。
+        let small = compute_default_size((1366, 768));
+        let medium = compute_default_size((1920, 1080));
+        let large = compute_default_size((2560, 1440));
+        assert!(medium.0 > small.0 && large.0 > medium.0);
+        assert!(medium.1 > small.1 && large.1 > medium.1);
+        // 上下限：4K 收敛到与 2560×1440 相同的上限；小屏抬到下限。
+        let huge = compute_default_size((7680, 4320));
+        assert_eq!(huge, large, "超出上限的工作区必须收敛到同一上限");
+        let tiny = compute_default_size((800, 600));
+        assert!(tiny.0 >= 720 && tiny.1 >= 600, "小屏不得低于下限：{tiny:?}");
+        // 确定性：同一工作区恒定同尺寸。
+        assert_eq!(compute_default_size((1920, 1080)), medium);
+    }
+
+    /// 锚点（§10）：HeaderBar 环境胶囊存在、警示样式、就绪时隐藏（D30）。
+    #[test]
+    fn test_environment_pill_present() {
+        // 结构（D29 + D30）：胶囊在 HeaderBar 末端、警示色语义类、初始隐藏、文案经 i18n。
+        if !crate::test_support::gtk_ready("test_environment_pill_present") {
+            return;
+        }
+        let window = MainWindow::new();
+        let imp = window.imp();
+        // 警示色 = warning 调色（libadwaita 内置类）+ suggested-action 背景。
+        assert!(
+            imp.environment_pill.has_css_class("warning"),
+            "环境胶囊必须挂 warning 警示类"
+        );
+        assert!(
+            imp.environment_pill.has_css_class("suggested-action"),
+            "环境胶囊必须挂 suggested-action 背景类"
+        );
+        // 初始环境态 Unknown：胶囊不呈现（就绪口径同样隐藏）。
+        assert!(
+            !imp.environment_pill.is_visible(),
+            "环境未发现问题时胶囊必须隐藏"
+        );
+        assert!(
+            imp.environment_pill
+                .label()
+                .is_some_and(|label| !label.is_empty()),
+            "胶囊文案必须经 i18n 键装配"
+        );
+        for locale in [
+            presentation::DEFAULT_LOCALE,
+            presentation::FALLBACK_LANGUAGE,
+        ] {
+            let text = rust_i18n::t!("environment.pill_label", locale = locale).to_string();
+            assert_ne!(text, "environment.pill_label", "{locale} 缺少胶囊文案");
+        }
     }
 
     /// 锚点（§10）：锁定状态徽章与设备态一一对应。

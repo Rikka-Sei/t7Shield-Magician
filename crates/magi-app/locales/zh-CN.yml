@@ -90,6 +90,19 @@ password:
   empty: "请输入密码"
 platform:
   linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。如遇权限不足，请自行授予设备节点的读写权限（本工具不会请求管理员权限）。"
+environment:
+  pill_label: "环境问题"
+  pill_tooltip: "运行环境未就绪：点击查看引导向导"
+  wizard_title: "环境引导"
+  issues_group: "发现的问题"
+  issue_module_title: "内核 sg 模块未装载"
+  issue_module_advice: "点击「装载内核模块」经系统授权装载（需要管理员密码）；也可以手动执行 sudo modprobe sg 后重新检查。"
+  issue_permission_title: "设备节点不可读写：%{node}"
+  issue_permission_advice: "请将当前用户加入 disk 用户组，或配置 udev 规则授予 /dev/sg* 读写权限；本工具不会自行提权。"
+  action_load: "装载内核模块"
+  action_load_busy: "正在装载…"
+  action_recheck: "重新检查"
+  empty: "未发现问题，环境已就绪。"
 issue:
 diagnostics:
   view_title: "诊断日志"
@@ -115,6 +128,9 @@ DeviceGone:
 CommandTimeout:
   reason: "设备超过 30 秒没有响应"
   advice: "请检查连接后重新发起操作，本工具不会自动重试"
+PermissionDenied:
+  reason: "当前用户没有设备节点的读写权限"
+  advice: "请将当前用户加入 disk 用户组或配置 udev 规则授予 /dev/sg* 读写权限，然后重新发起操作"
 TransportFailure:
   reason: "与设备通信时发生底层错误"
   advice: "请导出诊断日志并提交问题报告"

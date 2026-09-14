@@ -60,10 +60,9 @@ pub fn scan_devices_in(sys_root: &Path, vid: u16) -> Result<Vec<LinuxSgDevice>, 
         let Some(device_dir) = canonical(&entry.path().join("device")) else {
             continue;
         };
-        let (Some(found_vid), Some(found_pid)) = (
-            read_hex_u16(&device_dir, KEY_ID_VENDOR),
-            read_hex_u16(&device_dir, KEY_ID_PRODUCT),
-        ) else {
+        // USB 标识（idVendor/idProduct）挂在 usb 设备祖先目录上，不在 scsi_device
+        // 目录本身（真实 sysfs：…/usb4/4-4/{idVendor,idProduct}），逐级向上找。
+        let Some((found_vid, found_pid)) = usb_ids_of(&device_dir) else {
             continue;
         };
         if found_vid == vid {
@@ -120,6 +119,17 @@ pub fn observe_reenumeration_in(
 fn scsi_device_dir(sys_root: &Path, node: &str) -> Option<PathBuf> {
     let name = Path::new(node).file_name()?.to_str()?;
     canonical(&sys_root.join(SCSI_GENERIC_CLASS).join(name).join("device"))
+}
+
+/// 从 `scsi_device` 目录逐级向上找 USB 标识：真实 sysfs 里 `idVendor`/`idProduct`
+/// 位于 usb 设备祖先目录（如 `…/usb4/4-4`），scsi_device 目录本身只有 SCSI 级属性。
+/// 逐级查找同时兼容标识直接落在 device 目录的布局。
+fn usb_ids_of(device_dir: &Path) -> Option<(u16, u16)> {
+    device_dir.ancestors().find_map(|dir| {
+        let vid = read_hex_u16(dir, KEY_ID_VENDOR)?;
+        let pid = read_hex_u16(dir, KEY_ID_PRODUCT)?;
+        Some((vid, pid))
+    })
 }
 
 /// 属于同一 `scsi_device` 的块设备名（`/sys/block/<name>/device` 指向该 `scsi_device`）。
@@ -217,13 +227,20 @@ mod tests {
         (sys, proc)
     }
 
-    /// 写入一个 `sgN` 节点及其 USB 标识（模拟 `scsi_device` 目录树）。
+    /// 写入一个 `sgN` 节点及其 USB 标识（模拟真实 sysfs 布局：
+    /// `class/sgN/device` 是指向 scsi_device 的符号链接，USB 标识挂在
+    /// scsi_device 的 usb 设备祖先目录上，如 `…/usb4/4-4/{idVendor,idProduct}`）。
     fn write_sg_device(sys: &Path, name: &str, vid: u16, pid: u16) -> PathBuf {
-        let device = sys.join(SCSI_GENERIC_CLASS).join(name).join("device");
-        fs::create_dir_all(&device).unwrap();
-        fs::write(device.join(KEY_ID_VENDOR), format!("{vid:04x}\n")).unwrap();
-        fs::write(device.join(KEY_ID_PRODUCT), format!("{pid:04x}\n")).unwrap();
-        device
+        // 每个 sgN 独立的 usb 设备祖先，避免多设备夹具互相覆盖标识。
+        let usb_device = sys.join("devices/pci0000:00/usb4").join(format!("usb-{name}"));
+        let scsi_device = usb_device.join("4-4:1.0/host0/target0:0:0/0:0:0:0");
+        fs::create_dir_all(&scsi_device).unwrap();
+        fs::write(usb_device.join(KEY_ID_VENDOR), format!("{vid:04x}\n")).unwrap();
+        fs::write(usb_device.join(KEY_ID_PRODUCT), format!("{pid:04x}\n")).unwrap();
+        let link = sys.join(SCSI_GENERIC_CLASS).join(name).join("device");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        symlink(&scsi_device, &link).unwrap();
+        scsi_device
     }
 
     /// 为某个 `scsi_device` 挂一个块设备（`/sys/block/<block>/device` → `scsi_device`）。

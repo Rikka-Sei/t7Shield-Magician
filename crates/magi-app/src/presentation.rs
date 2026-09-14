@@ -22,6 +22,8 @@ pub const CODE_TRANSPORT_UNAVAILABLE: &str = "TransportUnavailable";
 pub const CODE_DEVICE_GONE: &str = "DeviceGone";
 /// 呈现码 `CommandTimeout`（§4.13）。
 pub const CODE_COMMAND_TIMEOUT: &str = "CommandTimeout";
+/// 呈现码 `PermissionDenied`（§4.13，D32：权限错误独立呈现码）。
+pub const CODE_PERMISSION_DENIED: &str = "PermissionDenied";
 /// 呈现码 `TransportFailure`（§4.13）。
 pub const CODE_TRANSPORT_FAILURE: &str = "TransportFailure";
 /// 呈现码 `EmptyResponse`（§4.13）。
@@ -33,13 +35,14 @@ pub const CODE_PROTOCOL_FAILURE: &str = "ProtocolFailure";
 /// 呈现码 `EmptyPassword`（§4.13）。
 pub const CODE_EMPTY_PASSWORD: &str = "EmptyPassword";
 
-/// 全部呈现码（与 [`message_keys`] 常量表同序；10 个，§4.13）。
-pub const PRESENTATION_CODES: [&str; 10] = [
+/// 全部呈现码（与 [`message_keys`] 常量表同序；11 个，§4.13）。
+pub const PRESENTATION_CODES: [&str; 11] = [
     CODE_BUSY,
     CODE_PASSWORD_REJECTED,
     CODE_TRANSPORT_UNAVAILABLE,
     CODE_DEVICE_GONE,
     CODE_COMMAND_TIMEOUT,
+    CODE_PERMISSION_DENIED,
     CODE_TRANSPORT_FAILURE,
     CODE_EMPTY_RESPONSE,
     CODE_PASSWORD_OPERATION_UNSPECIFIED,
@@ -51,7 +54,7 @@ pub const PRESENTATION_CODES: [&str; 10] = [
 ///
 /// 常量表是键名的唯一来源，[`message_keys`] 只做呈现码到该表的查表；测试断言表与
 /// [`PRESENTATION_CODES`] 同序同集，且每个键在两份 locale 资源里都存在。
-const MESSAGES: [(&str, &str, &str); 10] = [
+const MESSAGES: [(&str, &str, &str); 11] = [
     (CODE_BUSY, "Busy.reason", "Busy.advice"),
     (
         CODE_PASSWORD_REJECTED,
@@ -68,6 +71,11 @@ const MESSAGES: [(&str, &str, &str); 10] = [
         CODE_COMMAND_TIMEOUT,
         "CommandTimeout.reason",
         "CommandTimeout.advice",
+    ),
+    (
+        CODE_PERMISSION_DENIED,
+        "PermissionDenied.reason",
+        "PermissionDenied.advice",
     ),
     (
         CODE_TRANSPORT_FAILURE,
@@ -164,6 +172,8 @@ pub fn presentation_code(err: &AppError) -> &'static str {
         AppError::Transport(TransportError::Unavailable) => CODE_TRANSPORT_UNAVAILABLE,
         AppError::Transport(TransportError::DeviceGone) => CODE_DEVICE_GONE,
         AppError::Transport(TransportError::Timeout { .. }) => CODE_COMMAND_TIMEOUT,
+        // D32：权限错误独立呈现码（§5 消费方：提示设备节点权限与设备归属）。
+        AppError::Transport(TransportError::PermissionDenied) => CODE_PERMISSION_DENIED,
         AppError::Transport(_) => CODE_TRANSPORT_FAILURE,
         AppError::Protocol(ProtocolError::EmptyResponse { .. }) => CODE_EMPTY_RESPONSE,
         AppError::Protocol(ProtocolError::PasswordOperationUnspecified) => {
@@ -235,8 +245,8 @@ mod tests {
         }
     }
 
-    /// §4.13 呈现码表逐行断言（含 `Platform`/`PermissionDenied`/`ShortResponse`/
-    /// `ScsiCheckCondition` 四行都落到 `TransportFailure`）。
+    /// §4.13 呈现码表逐行断言（含 `Platform`/`ShortResponse`/`ScsiCheckCondition`
+    /// 三行落到 `TransportFailure`；`PermissionDenied` 自 D32 起独立呈现码）。
     #[test]
     fn test_presentation_codes_match_spec_table() {
         let step = CommandStep::Unlock(UnlockStep::SetReadLocked);
@@ -263,7 +273,7 @@ mod tests {
             ),
             (
                 AppError::Transport(TransportError::PermissionDenied),
-                "TransportFailure",
+                "PermissionDenied",
             ),
             (
                 AppError::Transport(TransportError::ShortResponse { got: 16 }),

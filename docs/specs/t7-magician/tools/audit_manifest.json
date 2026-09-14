@@ -42,9 +42,9 @@
     "TODO"
   ],
   "requirement_prefix": "REQ-",
-  "min_requirements": 12,
+  "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 29,
+  "latest_decision": 32,
   "decisions": [
     {
       "decision_id": "D01",
@@ -1101,6 +1101,144 @@
         }
       ],
       "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D30",
+      "required_terms": [
+        "环境就绪",
+        "环境胶囊",
+        "引导向导"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D30",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D30 条目"
+        },
+        {
+          "pattern": "胶囊",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "环境胶囊契约必须同时落位 §4.11 与 REQ-013"
+        },
+        {
+          "pattern": "引导向导",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "引导向导契约必须落位 §4.11 与 REQ-013"
+        },
+        {
+          "pattern": "pkexec",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "模块装载的固定授权命令必须写入 REQ-013 契约"
+        },
+        {
+          "pattern": "polkit",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "6"
+          ],
+          "reason": "提权边界必须写入 §6 安全 NFR"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D31",
+      "required_terms": [
+        "工作区"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D31",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D31 条目"
+        },
+        {
+          "pattern": "工作区",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "默认尺寸按显示器工作区推导的契约与判据必须落位 §4.11"
+        },
+        {
+          "pattern": "compute_default_size",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "尺寸推导的统一裁决函数必须写入 §4.11 契约"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D32",
+      "required_terms": [
+        "PermissionDenied"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D32",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D32 条目"
+        },
+        {
+          "pattern": "PermissionDenied",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "独立呈现码必须落位 §4.12 呈现码表与 §5 错误模型"
+        }
+      ],
+      "forbidden_occurrences": []
     }
   ],
   "code_contracts": [
@@ -1168,6 +1306,50 @@
         "crates/magi-app/src/**/*.rs"
       ],
       "reason": "应用 ID 必须与 §4.12 身份表一致（D24）"
+    },
+    {
+      "id": "environment-inspect",
+      "pattern": "pub fn inspect_environment",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "环境自检的唯一权威入口（D30）"
+    },
+    {
+      "id": "environment-state",
+      "pattern": "pub enum EnvironmentState",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "环境就绪状态机类型（D30）"
+    },
+    {
+      "id": "module-load-command",
+      "pattern": "pub fn module_load_command",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "模块装载固定命令的白名单出口（D30）"
+    },
+    {
+      "id": "window-default-size",
+      "pattern": "pub fn compute_default_size",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "主窗口默认尺寸按工作区推导的统一裁决函数（D31）"
     }
   ],
   "obsolete_code_contracts": [],
@@ -1340,6 +1522,46 @@
       ],
       "required": true,
       "reason": "设置对话框实例化与两个三态行的默认选中态（D28）"
+    },
+    {
+      "name": "test_environment_report_missing_module",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "环境自检报告 sg 模块缺失（D30）"
+    },
+    {
+      "name": "test_environment_report_permission_denied",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "环境自检报告设备节点权限不足（D30）"
+    },
+    {
+      "name": "test_environment_state_transitions",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "环境就绪状态机：检查/装载/失败/重检转换（D30）"
+    },
+    {
+      "name": "test_window_size_scales_with_workarea",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "窗口默认尺寸随工作区推导、含上下限（D31）"
+    },
+    {
+      "name": "test_environment_pill_present",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "HeaderBar 环境胶囊存在、警示样式、就绪时隐藏（D30）"
     }
   ],
   "barriers": [

@@ -22,6 +22,9 @@ pub mod controller;
 /// 内存环形缓冲（512 条）+ 脱敏导出（§6「合规与保留」）。
 pub mod diagnostics;
 
+/// §4.13 环境就绪引导（D30）：自检、模块装载状态机与固定装载命令（纯逻辑，无 GTK）。
+pub mod environment;
+
 /// 工作线程 + channel + `AppEvent` 投递（`spawn_device_job`）。
 pub mod jobs;
 

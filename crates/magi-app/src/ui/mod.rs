@@ -13,10 +13,12 @@ use libadwaita as adw;
 pub mod main_window;
 pub mod password_dialog;
 pub mod settings_dialog;
+pub mod environment_dialog;
 
 pub use main_window::MainWindow;
 pub use password_dialog::PasswordDialog;
 pub use settings_dialog::SettingsDialog;
+pub use environment_dialog::EnvironmentDialog;
 
 use crate::settings::Settings;
 

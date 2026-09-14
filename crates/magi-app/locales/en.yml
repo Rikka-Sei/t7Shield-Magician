@@ -91,6 +91,19 @@ password:
   empty: "Enter a password first"
 platform:
   linux_notice: "This tool talks to the drive through Linux's SCSI generic interface. If access is denied, grant yourself read/write permission on the device node (this tool never asks for root)."
+environment:
+  pill_label: "Environment"
+  pill_tooltip: "The runtime environment is not ready: open the setup guide"
+  wizard_title: "Setup Guide"
+  issues_group: "Issues found"
+  issue_module_title: "Kernel 'sg' module is not loaded"
+  issue_module_advice: "Click \"Load kernel module\" to load it with system authorization (administrator password required), or run sudo modprobe sg manually and recheck."
+  issue_permission_title: "Device node is not readable/writable: %{node}"
+  issue_permission_advice: "Add your user to the 'disk' group, or configure a udev rule granting read/write access to /dev/sg*. This tool never elevates itself."
+  action_load: "Load kernel module"
+  action_load_busy: "Loading…"
+  action_recheck: "Recheck"
+  empty: "No issues found — the environment is ready."
 issue:
 diagnostics:
   title: "Diagnostics log export"
@@ -116,6 +129,9 @@ DeviceGone:
 CommandTimeout:
   reason: "The drive did not respond within 30 seconds"
   advice: "Check the connection and start the operation again — this tool never retries automatically"
+PermissionDenied:
+  reason: "Your user account cannot read or write the device node"
+  advice: "Add your user to the 'disk' group or configure a udev rule granting read/write access to /dev/sg*, then try again"
 TransportFailure:
   reason: "A low-level communication error occurred while talking to the drive"
   advice: "Export the diagnostics log and report the issue"
