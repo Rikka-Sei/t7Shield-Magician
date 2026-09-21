@@ -90,7 +90,7 @@ password:
   cancel: "Cancel"
   empty: "Enter a password first"
 platform:
-  linux_notice: "This tool talks to the drive through Linux's SCSI generic interface. If access is denied, grant yourself read/write permission on the device node (this tool never asks for root)."
+  linux_notice: "This tool talks to the drive through Linux's SCSI generic interface. When the runtime environment is missing (kernel module, device permissions), a system authorization window will ask for the administrator password to fix it; you can also follow the manual steps in the setup guide."
 environment:
   pill_label: "Environment"
   pill_tooltip: "The runtime environment is not ready: open the setup guide"
@@ -99,14 +99,13 @@ environment:
   issue_module_title: "Kernel 'sg' module is not loaded"
   issue_module_advice: "Click \"Load kernel module\" to load it with system authorization (administrator password required), or run sudo modprobe sg manually and recheck."
   issue_permission_title: "Device node is not readable/writable: %{node}"
-  issue_permission_advice: "Click \"Fix device permissions\" to install a reversible udev rule (grants read/write to this drive for the logged-in desktop user only; administrator password required), or add your user to the 'disk' group manually. To undo: remove /etc/udev/rules.d/71-magishield-uaccess.rules and run udevadm control --reload."
+  issue_permission_advice: "Click \"Fix device permissions\" to grant read/write on this drive immediately (administrator password required; nothing is written to system configuration — if access is lost after replug or reboot, just fix it again), or run sudo setfacl -m u:$USER:rw /dev/sg* manually."
   action_load: "Load kernel module"
   action_load_busy: "Loading…"
   action_fix: "Fix device permissions"
   action_fix_busy: "Fixing…"
   action_recheck: "Recheck"
   empty: "No issues found — the environment is ready."
-issue:
 diagnostics:
   title: "Diagnostics log export"
   view_title: "Diagnostics log"
