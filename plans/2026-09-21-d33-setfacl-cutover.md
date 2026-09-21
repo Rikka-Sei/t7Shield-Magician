@@ -24,19 +24,34 @@
 - 现状：environment.rs 有编译断点与两个同名草稿测试；controller.rs 834 行；ui/main_window.rs 1749 行。
 - `mod test_support` 与各模块内 `#[cfg(test)]` 测试随代码一起搬迁（锚点 grep 范围是 `crates/magi-app/**/*.rs`，搬文件不动锚点可达性）。
 
+- 目录分组（用户裁定）：gate/rescan/jobs/environment/observation 五个设备域纯逻辑模块收进 `src/device/` 子目录（`crate::device::…` 路径，净切换不留 re-export shim）；presentation/settings/diagnostics/test_support 横切模块与 ui/ 留在原位。manifest 契约/锚点 glob `crates/magi-app/src/**/*.rs` 覆盖子目录，零 manifest/spec 改动。
+
 ---
 
 ### Task 1: environment.rs 定稿（状态机 + 命名修订 + 锚点改名）
 
 **Files:**
-- Modify: `crates/magi-app/src/environment.rs`
+- Move: `crates/magi-app/src/environment.rs` → `crates/magi-app/src/device/environment.rs`（Step 0，git mv）
+- Move: `crates/magi-app/src/observation.rs` → `crates/magi-app/src/device/observation.rs`（Step 0，git mv）
+- Modify: `crates/magi-app/src/device/environment.rs`（Step 1–3）
+- Modify: `crates/magi-app/src/lib.rs` + 新建 `crates/magi-app/src/device/mod.rs`（Step 0 模块声明）
+- Modify: 全仓 `crate::environment`/`crate::observation` 引用点（Step 0）
 - Modify: `crates/magi-app/src/ui/main_window.rs`（仅测试名引用处同步改名）
 - Modify: `docs/specs/t7-magician/tools/audit_manifest.json`（锚点名）
 - Modify: `docs/specs/t7-magician/spec.md`（§10 锚点行）
 
 **Interfaces:**
-- Produces: `AutoAttempts`、三参 `next_environment_state`、`permission_fix_commands`/`_with_path`、`current_user`、`username_is_allowed`/`sg_node_is_allowed`（原 `user_is_safe`/`node_is_safe` 改名）、`startup_verdict`/`recheck_verdict`（原 `startup_done`/`recheck_done`，私有）。
+- Produces: `crate::device::environment::{AutoAttempts, next_environment_state, permission_fix_commands, permission_fix_commands_with_path, current_user, username_is_allowed, sg_node_is_allowed}`（校验器与裁决器为新名：原 `user_is_safe`/`node_is_safe`/`startup_done`/`recheck_done` 改名，后两者私有）。
 
+- [ ] **Step 0: 目录分组搬迁（纯 git mv + 路径更新，零行为变更）**
+
+```bash
+mkdir -p crates/magi-app/src/device
+git mv crates/magi-app/src/environment.rs crates/magi-app/src/device/environment.rs
+git mv crates/magi-app/src/observation.rs crates/magi-app/src/device/observation.rs
+```
+
+`lib.rs` 增 `pub mod device;`（`device/mod.rs` 声明 `pub mod environment; pub mod observation;`），删原两条根声明；全仓 `use crate::environment`/`crate::observation` 引用点改为 `crate::device::…`（grep 逐点更新，测试随迁）。跑 `cargo test -p magi-app 2>&1 | grep 'test result'` 确认数量不变。
 - [ ] **Step 1: 重写测试区为失败态**
 
 删除文件内两个 `test_permission_fix_command_whitelist` 草稿与旧二参调用，写入（完整代码与上一版计划 Task 1 Step 1 相同，仅两处差异——校验器改名、状态机助手改名后测试内引用同步）：
@@ -230,16 +245,16 @@ fn startup_verdict(
 ### Task 2: controller.rs 拆解（gate.rs / rescan.rs / jobs 吸收，controller 删除）
 
 **Files:**
-- Create: `crates/magi-app/src/gate.rs`（ActionId、UnlockGate、PasswordAttempts 及其测试）
-- Create: `crates/magi-app/src/rescan.rs`（DeviceIdentity、RescanState、clamp_devices 及其测试）
-- Modify: `crates/magi-app/src/jobs.rs`（吸收 DeviceId、JobRegistry、JobGuard、open_and_discover 及其测试）
+- Create: `crates/magi-app/src/device/gate.rs`（ActionId、UnlockGate、PasswordAttempts 及其测试）
+- Create: `crates/magi-app/src/device/rescan.rs`（DeviceIdentity、RescanState、clamp_devices 及其测试）
+- Move + Modify: `crates/magi-app/src/jobs.rs` → `crates/magi-app/src/device/jobs.rs`（Step 0 git mv；吸收 DeviceId、JobRegistry、JobGuard、open_and_discover 及其测试）
 - Modify: `crates/magi-app/src/presentation.rs`（吸收 PlatformNotice）
 - Delete: `crates/magi-app/src/controller.rs`
-- Modify: `crates/magi-app/src/lib.rs`（模块声明：`pub mod gate; pub mod rescan;` 删 `pub mod controller;`）
-- Modify: 全部 `use crate::controller::…` 引用点（main_window.rs / jobs.rs / presentation.rs / ui/*.rs，以 grep 为准逐一改为新路径）
+- Modify: `crates/magi-app/src/lib.rs`（模块声明收敛进 `device/mod.rs`：`pub mod gate; pub mod rescan; pub mod jobs;`，删 `pub mod controller;` 与根 `pub mod jobs;`）
+- Modify: 全部 `use crate::controller::…` 与 `crate::jobs::…` 引用点（main_window.rs / presentation.rs / ui/*.rs，以 grep 为准逐一改为 `crate::device::…` 路径）
 
 **Interfaces:**
-- Produces: `crate::gate::{ActionId, UnlockGate}`、`crate::rescan::{DeviceIdentity, RescanState, clamp_devices}`、`crate::jobs::{DeviceId, JobRegistry, open_and_discover}`——公开签名与实现原样搬迁（零行为变更），仅模块路径变化。
+- Produces: `crate::device::gate::{ActionId, UnlockGate}`、`crate::device::rescan::{DeviceIdentity, RescanState, clamp_devices}`、`crate::device::jobs::{DeviceId, JobRegistry, open_and_discover}`——公开签名与实现原样搬迁（零行为变更），仅模块路径变化。
 
 - [ ] **Step 1: 机械搬迁（编译器驱动）**
 
@@ -277,7 +292,7 @@ git commit -S -m "refactor: controller.rs 拆解为 gate/rescan，作业设施�
 
 - [ ] **Step 1: main_window.rs 侧改造**
 
-1. `WindowState`：删 `auto_load_used`/`auto_fix_used`，加 `pub(crate) env_autos: crate::environment::AutoAttempts`（WindowState 字段当前私有，环境方法跨文件访问需 `pub(crate)`——同批把 WindowState 字段全部改 `pub(crate)`，供后续页面拆分复用）。
+1. `WindowState`：删 `auto_load_used`/`auto_fix_used`，加 `pub(crate) env_autos: crate::device::environment::AutoAttempts`（WindowState 字段当前私有，环境方法跨文件访问需 `pub(crate)`——同批把 WindowState 字段全部改 `pub(crate)`，供后续页面拆分复用）。
 2. `fn state()` → `pub(crate) fn state()`。
 3. 删除 main_window.rs 内的环境方法九个（Task 3 Step 3 的新文件承接），`start()`/`connect_actions` 中的调用点保持不变（方法经 `impl MainWindow` 跨文件可见）。
 
@@ -289,7 +304,7 @@ git commit -S -m "refactor: controller.rs 拆解为 gate/rescan，作业设施�
 
 use gtk::glib;
 
-use crate::environment::{self, EnvironmentEvent, EnvironmentState, next_environment_state};
+use crate::device::environment::{self, EnvironmentEvent, EnvironmentState, next_environment_state};
 use crate::ui::MainWindow;
 use crate::ui::environment_dialog::EnvironmentDialog;
 
@@ -415,8 +430,8 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use crate::jobs::ScanHit;
-use crate::rescan::DeviceIdentity;
+use crate::device::jobs::ScanHit;
+use crate::device::rescan::DeviceIdentity;
 use crate::ui::MainWindow;
 
 /// 仪表盘控件集（构建于本文件，装配进主窗口 imp）。
@@ -508,30 +523,13 @@ main_window 收敛为窗口骨架/装配/路由/作业与口令流程（约 -600
 ```rust
 /// 作业编排域：单飞闸门、在飞设备/动作与取消标志（不变量：device 与 action 同生命周期）。
 pub(crate) struct JobState {
-    pub gate: crate::gate::UnlockGate,
-    pub device: Option<crate::jobs::DeviceJob>,
-    pub cancel: crate::jobs::CancelFlag,
-    pub action: Option<crate::gate::ActionId>,
-}
-
-/// i18n 重放域：语言切换后按新语言重放的动态呈现缓存。
-pub(crate) struct ReplayState {
-    pub last_outcome: Option<StoredOutcome>,
-    pub last_hit: Option<crate::jobs::ScanHit>,
-}
-
-/// 对话框域：打开中的对话框弱引用（语言切换联动刷新）。
-#[derive(Default)]
-pub(crate) struct DialogRefs {
-    pub password: Option<gtk::glib::WeakRef<PasswordDialog>>,
-    pub environment: Option<gtk::glib::WeakRef<EnvironmentDialog>>,
-}
-
-/// 环境域：状态机当前态 + 一次性纪律标志（§4.13，environment_flow 消费）。
-#[derive(Default)]
-pub(crate) struct EnvState {
-    pub state: crate::environment::EnvironmentState,
-    pub autos: crate::environment::AutoAttempts,
+    pub gate: crate::device::gate::UnlockGate,
+    pub device: Option<crate::device::jobs::DeviceJob>,
+    pub cancel: crate::device::jobs::CancelFlag,
+    pub action: Option<crate::device::gate::ActionId>,
+    pub last_hit: Option<crate::device::jobs::ScanHit>,
+    pub state: crate::device::environment::EnvironmentState,
+    pub autos: crate::device::environment::AutoAttempts,
 }
 
 /// 外壳控件集：顶栏（窗口单元自有，非页面）。
@@ -579,7 +577,7 @@ git commit -S -m "refactor: WindowState 分域 + 外壳子结构体 + 对话框�
 ### Task 5: jobs.rs 事件路由改窗口自持 Receiver
 
 **Files:**
-- Modify: `crates/magi-app/src/jobs.rs`、`crates/magi-app/src/ui/main_window.rs`
+- Modify: `crates/magi-app/src/device/jobs.rs`、`crates/magi-app/src/ui/main_window.rs`
 
 内容与上一版计划 Task 3 完全一致：删 `EVENT_SINK`/`set_event_sink`/`deliver`/`EventSink`；`spawn_device_job` 返回 `Result<async_channel::Receiver<AppEvent>, AppError>`；`start()` 删注册；`start_job` 消费自持 Receiver（`spawn_local` 循环 `this.on_event(event)`）。
 
@@ -590,9 +588,9 @@ git commit -S -m "refactor: WindowState 分域 + 外壳子结构体 + 对话框�
 ### Task 6: 启动异步化 + 周期环境自检
 
 **Files:**
-- Modify: `crates/magi-app/src/jobs.rs`、`crates/magi-app/src/ui/main_window.rs`
+- Modify: `crates/magi-app/src/device/jobs.rs`、`crates/magi-app/src/ui/main_window.rs`
 
-内容与上一版计划 Task 4 完全一致：`ScanOutcome` 加 `pub env: crate::environment::EnvironmentReport`；`fetch_scan` 两处构造补 `env: crate::environment::inspect_environment()`；`spawn_scan_watch` 循环改「先取数后休眠」；`start()` 删同步 `refresh_devices()`/`start_environment_bootstrap()`（后者函数已随 Task 3 迁移，直接删除）；`spawn_device_watch` 消费循环 `first` 标记首轮 authoritative + 每轮 `apply_environment_event(CheckDone(outcome.env.clone()))`。
+内容与上一版计划 Task 4 完全一致：`ScanOutcome` 加 `pub env: crate::device::environment::EnvironmentReport`；`fetch_scan` 两处构造补 `env: crate::device::environment::inspect_environment()`；`spawn_scan_watch` 循环改「先取数后休眠」；`start()` 删同步 `refresh_devices()`/`start_environment_bootstrap()`（后者函数已随 Task 3 迁移，直接删除）；`spawn_device_watch` 消费循环 `first` 标记首轮 authoritative + 每轮 `apply_environment_event(CheckDone(outcome.env.clone()))`。
 
 - [ ] Steps: 改造 → `cargo test -p magi-app` PASS → 提交 `feat: 启动扫描与环境自检异步化，周期重扫每轮附带环境自检（§4.13/§6）`（GPG）。
 
