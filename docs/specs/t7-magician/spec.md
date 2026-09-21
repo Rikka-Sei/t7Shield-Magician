@@ -1,7 +1,7 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
 **状态:** Draft（D33 已入 §9，代码落地、屏障全绿后与代码同批切回 Authoritative）
-**版本:** 0.4（决策基线：D01–D33）
+**版本:** 0.5（决策基线：D01–D34）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端（运行目标平台为仅 Linux）的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与 Linux 传输行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -119,8 +119,11 @@ graph LR
     I18N --- UI
     ENV --- UI
     SET --- UI
+```
 
 依赖方向为单向：`magi-app` → `magi-protocol` → `magi-transport`。`magi-protocol` 不得依赖 GTK 与任何 UI 类型；`magi-app` 不得直接构造 CDB 或令牌流。§3.1 不负责：设备侧固件的内部状态命名、操作系统内核驱动行为、文件系统层。
+
+应用内代码组织约束（D34）：界面层按窗口/对话框/页面分文件（D29）；纯逻辑层按域分模块并收进域目录——设备域（入口闸门、重扫、作业、环境、观察等单一关注点模块）与横切设施（错误呈现、设置、诊断）两类；单模块单一关注点，禁止向既有模块追加异属职责。约束只定义分法不变量，不锁具体文件清单，布局演进不进 spec。
 
 ### 3.2 状态定义
 
@@ -1085,6 +1088,7 @@ pub fn next_environment_state(
 | D31 | 窗口尺寸自适应：主窗口默认尺寸按默认显示器的可用几何比例推导（`compute_default_size` 统一裁决，含上下限），不写死像素值；GDK4 已移除工作区（workarea）API、Wayland 呈现前不可知「窗口所在显示器」，判据以默认显示器几何为准，面板避让与落位归窗口管理器；无显示器环境（无头测试）回落固定默认尺寸；内容区可滚动，高字体缩放下不依赖固定像素高度；比例、上下限与无头回落的具体数值属实现细节，不进 spec | §4.11、§8、§9 | §4.11 出现 `compute_default_size` 契约与「默认显示器」判据；窗口固定像素尺寸写法零命中（由 manifest 的 D25 像素级禁止规则覆盖） |
 | D32 | `TransportError::PermissionDenied` 的呈现码独立为 `PermissionDenied`：§5 错误模型已声明其消费方为「UI 提示设备节点权限与设备归属」，原 §4.12 表把它并入 `TransportFailure` 的通用文案，权限错误的可操作指引被稀释；独立呈现码后原因/建议文案直达修复动作（加入 disk 用户组或配置 udev 规则后重试）；原表行原地合并，不留旧映射 | §4.12、§5、§9 | §4.12 呈现码表出现 `PermissionDenied` 行且 `TransportFailure` 行不再覆盖权限错误 |
 | D33 | 权限修复成为软件能力且零持久化：设备节点不可读写时，引导向导提供「修复设备权限」动作（启动引导链自动发起一次，向导内可显式重试）；经 polkit 授权以 argv 直传的 `pkexec setfacl -m u:<user>:rw <nodes…>` 即时授予当前登录用户读写——不写规则文件、不改属主与用户组、不动节点 mode、不落任何系统配置，重插/重启/重枚举后自然失效（工具定位为即时使用，无持久化诉求）。`user`/`nodes` 字符白名单校验，不经 shell，无注入面。真机实验（2026-09-21，NixOS）：授予与撤销双向验证通过。环境状态机扩展 `Fixing` 态与 `FixPermissions*` 事件与 `AutoAttempts` 一次性纪律，与装载互斥并发（单飞）。注：NixOS 的 `/etc/udev/rules.d` 指向只读 nix store，规则安装路线在该平台不可行（调查结论，不进实现） | §4.11、§4.13、§5、§6、§7、§8、§9、§10 | §4.13 出现 `permission_fix_commands` 契约、`AutoAttempts` 纪律与零持久化条款；AC-016 覆盖修复失败呈现；锚点 `test_permission_fix_command_whitelist` |
+| D34 | 应用代码组织约束补全：界面层分文件约束（D29）扩展至纯逻辑层——按域分模块并收进域目录（设备域与横切设施两类），单模块单一关注点，禁止向既有模块追加异属职责；只约束分法不变量、不锁文件清单，布局演进不动 spec。归因：controller.rs 834 行六类关注点混装的审计结论（纯逻辑层无组织约束的不对称缺口） | §3.1、§9 | §3.1 出现「域目录」与「单一关注点」组织约束条款；D29 仍管界面层 |
 
 ## 10. 验证
 
@@ -1134,4 +1138,4 @@ pub fn next_environment_state(
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，非 Linux 平台 `open` 返回通道不可用 | 同上，传输层屏障 PASS |
 | 应用层屏障 | `crates/magi-app` 存在 | `cargo test -p magi-app` 通过（含 UI 冒烟与环境状态机） | 同上，应用层屏障 PASS |
 
-**当前状态（Draft：D33 变更中）**：D30（环境就绪引导）、D31（窗口尺寸自适应）、D32（PermissionDenied 独立呈现码）已随代码落地（提交 `68c943f`）；本轮 D33（权限修复改 `setfacl` 即时 ACL、零持久化）与双审计修订（spec 缺陷 P0×1/P1×5/P2×8 + UI/Rust 组织审计）已入正文与 manifest，代码侧 D1–D7 修订待落地，`spec_status=draft`，审计对新契约/锚点的缺失降级为 warning 不阻断。代码落地、`cargo test --workspace` 全绿、真机验证（产品路径修复→授权→ACL 生效→胶囊消失）通过后，头部与本段统一切回 Authoritative 并与代码同批提交。上一基线（2026-09-15）：三 crate 测试 49+57+25、三件套全绿（详见 git 历史）。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码。
+**当前状态（Draft：D33/D34 变更中）**：D30（环境就绪引导）、D31（窗口尺寸自适应）、D32（PermissionDenied 独立呈现码）已随代码落地（提交 `68c943f`）；本轮 D33（权限修复改 `setfacl` 即时 ACL、零持久化）与双审计修订（spec 缺陷 P0×1/P1×5/P2×8 + UI/Rust 组织审计）已入正文与 manifest，代码侧 D1–D7 修订待落地，`spec_status=draft`，审计对新契约/锚点的缺失降级为 warning 不阻断。代码落地、`cargo test --workspace` 全绿、真机验证（产品路径修复→授权→ACL 生效→胶囊消失）通过后，头部与本段统一切回 Authoritative 并与代码同批提交。上一基线（2026-09-15）：三 crate 测试 49+57+25、三件套全绿（详见 git 历史）。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码。

@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 33,
+  "latest_decision": 34,
   "decisions": [
     {
       "decision_id": "D01",
@@ -1281,6 +1281,49 @@
             "4"
           ],
           "reason": "即时 ACL 修复机制必须写入 §4.13 正文（代码块不计，须散文落位）"
+        }
+      ],
+      "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D34",
+      "required_terms": [
+        "域目录",
+        "单一关注点"
+      ],
+      "obsolete_terms": [],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D34",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D34 条目"
+        },
+        {
+          "pattern": "域目录",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "3"
+          ],
+          "reason": "纯逻辑层组织约束必须落位 §3.1 架构与边界"
+        },
+        {
+          "pattern": "单一关注点",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "3"
+          ],
+          "reason": "单模块单一关注点约束必须落位 §3.1"
         }
       ],
       "forbidden_occurrences": []
