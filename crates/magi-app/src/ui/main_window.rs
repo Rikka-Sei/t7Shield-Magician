@@ -679,6 +679,7 @@ impl MainWindow {
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
+        imp.header.window_title.set_title(&t!(item.label_key()));
         let index = NavItem::ALL
             .iter()
             .position(|candidate| *candidate == item)
