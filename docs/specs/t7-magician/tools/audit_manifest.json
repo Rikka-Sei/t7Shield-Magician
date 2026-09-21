@@ -1,7 +1,7 @@
 {
   "_readme": "t7-magician 权威规格审计清单。本文件是规范与验证的唯一事实源，先于 spec.md 正文编写。术语/决策/契约/锚点/屏障的任何变更都必须先改本文件再改正文。",
   "spec_file": "../spec.md",
-  "spec_status": "authoritative",
+  "spec_status": "draft",
   "repo_root": "../../../..",
   "required_sections": [
     "1. 背景与目标",
@@ -44,7 +44,7 @@
   "requirement_prefix": "REQ-",
   "min_requirements": 13,
   "decision_prefix": "D",
-  "latest_decision": 32,
+  "latest_decision": 33,
   "decisions": [
     {
       "decision_id": "D01",
@@ -1239,6 +1239,51 @@
         }
       ],
       "forbidden_occurrences": []
+    },
+    {
+      "decision_id": "D33",
+      "required_terms": [
+        "setfacl",
+        "权限修复"
+      ],
+      "obsolete_terms": [
+        "uaccess"
+      ],
+      "scoped_terms": [],
+      "whitelist": [],
+      "required_occurrences": [
+        {
+          "pattern": "D33",
+          "count": {
+            "min": 1
+          },
+          "sections": [
+            "9"
+          ],
+          "reason": "决策日志必须落位 D33 条目"
+        },
+        {
+          "pattern": "修复设备权限",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "向导修复动作契约必须落位 §4.11 与 §4.13"
+        },
+        {
+          "pattern": "setfacl",
+          "count": {
+            "min": 2
+          },
+          "sections": [
+            "4"
+          ],
+          "reason": "即时 ACL 修复机制必须写入 §4.13 正文（代码块不计，须散文落位）"
+        }
+      ],
+      "forbidden_occurrences": []
     }
   ],
   "code_contracts": [
@@ -1350,6 +1395,17 @@
         "crates/magi-app/src/**/*.rs"
       ],
       "reason": "主窗口默认尺寸按工作区推导的统一裁决函数（D31）"
+    },
+    {
+      "id": "permission-fix-command",
+      "pattern": "pub fn permission_fix_commands",
+      "count": {
+        "min": 1
+      },
+      "source_globs": [
+        "crates/magi-app/src/**/*.rs"
+      ],
+      "reason": "权限修复固定命令的白名单出口（D33）"
     }
   ],
   "obsolete_code_contracts": [],
@@ -1554,6 +1610,14 @@
       ],
       "required": true,
       "reason": "窗口默认尺寸随工作区推导、含上下限（D31）"
+    },
+    {
+      "name": "test_permission_fix_command_whitelist",
+      "source_globs": [
+        "crates/magi-app/**/*.rs"
+      ],
+      "required": true,
+      "reason": "权限修复命令固定形态：argv 直传 pkexec setfacl、user/nodes 白名单校验（D33）"
     },
     {
       "name": "test_environment_pill_present",

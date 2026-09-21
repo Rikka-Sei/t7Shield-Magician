@@ -1,7 +1,7 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
-**状态:** Authoritative（唯一权威）
-**版本:** 0.3（决策基线：D01–D32）
+**状态:** Draft（D33 已入 §9，代码落地、屏障全绿后与代码同批切回 Authoritative）
+**版本:** 0.4（决策基线：D01–D33）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端（运行目标平台为仅 Linux）的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与 Linux 传输行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
 **治理:** 行为变更必须先在 §9 决策日志新增或归因决策 ID，同步 `tools/audit_manifest.json`，运行 `python tools/test_audit_spec.py`、`python tools/audit_spec.py`、`python tools/barriers.py` 全部 PASS 后，再进入 plan/代码；被取代条款原地合并或删除，不留历史修订标注；spec 与代码同批提交。
@@ -70,18 +70,19 @@
 | 口令缓冲 | 保存用户口令明文的进程内缓冲，生命周期受 §4 约束 | 密码变量、pwd 串 |
 | 影子安全区 | 锁定态暴露的 34.5 MB FAT16 区域（S AREA 人格） | 安全区、隐藏区 |
 | 设备节点 | Linux 上用于下发 SCSI 命令的字符设备（`/dev/sg*`） | 盘符、块设备路径 |
-| 描述符侦察 | 只读取 USB 设备/配置/接口/端点描述符、不打开接口、不发送 CDB 的枚举动作 | 设备探测、扫描 |
 | 黄金向量 | 由官方实现逐字节还原、在测试中固定比对的期望字节串 | 参考样例、fixture 值 |
-| 呈现码 | UI 与诊断输出使用的稳定错误标识字符串，与 `AppError` 变体一一对应 | 错误标题、UI 错误名 |
+| 呈现码 | UI 与诊断输出使用的稳定错误标识字符串；每个错误分类对应唯一呈现码，多个错误分类可映射同一呈现码（多对一），不得另起别名 | 错误标题、UI 错误名 |
 | `token[i]` | 响应令牌流中按 §4.9 遍历顺序编号（从 0 起）的第 i 个原子 | 第 i 个元素 |
 | `StatusListForm` | 状态列表形态的选择类型：`Single` = 5 字节单列表，`Two` = 10 字节双列表；选择规则见 §4.6 | 状态列表变体、列表模式 |
 | `UnlockStep` | 进度步骤类型，与 §4.6 的 7 条命令一一对应 | 进度项、步骤枚举 |
 | `TransportError::Platform` | 承载非 SCSI 语义平台错误码（如既非 GOOD 也非 CHECK CONDITION 的完成状态）的传输层变体；SCSI 语义错误走 `ScsiCheckCondition` | 平台异常、未知传输错误 |
 | 诊断记录 | 内存环形缓冲中的结构化记录（上限 512 条）；只允许 CDB 字节、传输方向、响应长度三类字段，禁止请求载荷、令牌流与口令 | 请求日志、trace、dump |
-| 环境就绪 | 运行环境满足扫描与操作条件的状态：`sg` 内核模块已装载、设备节点存在且当前用户可读写 | 环境正常、初始化完成 |
+| 尽力收尾 | 收尾动作的固定语义：发起 EndSession 后不等待结果、不重试；失败只记入诊断，不改变既有错误分类，不阻塞退出 | 保证收尾、同步收尾 |
+| 环境就绪 | 运行环境满足扫描与操作条件的状态：`sg` 内核模块已装载、设备节点（若有）当前用户可读写——未连接设备不构成环境问题 | 环境正常、初始化完成 |
 | 环境胶囊 | HeaderBar 上的提示按钮：环境存在未解决问题时以警示色呈现，点击打开引导向导；环境就绪后不呈现 | 提示条、横幅、toast |
-| 引导向导 | 环境就绪引导对话框：逐项列出环境问题、提供修复动作（重新装载内核模块、重新检查）与手动指引 | 初始化向导、设置向导 |
+| 引导向导 | 环境就绪引导对话框：逐项列出环境问题、提供修复动作（重新装载内核模块、修复设备权限、重新检查）与手动指引 | 初始化向导、设置向导 |
 | 内核模块装载 | 经用户授权的 `modprobe sg` 调用（polkit 图形授权，固定命令 `pkexec modprobe sg`） | 加载驱动、静默提权 |
+| 权限修复 | 经用户授权对现有设备节点执行 `setfacl` 即时 ACL 授予（polkit 图形授权，argv 直传固定命令；零持久化痕迹，重插/重启自然失效） | 静默提权、修改设备属主、安装持久化规则 |
 
 ## 3. 系统模型与状态机
 
@@ -92,6 +93,8 @@ graph LR
     subgraph app["crates/magi-app（GTK4 + libadwaita）"]
         UI["应用外壳：侧边栏导航（仪表盘/诊断/关于）<br/>Rust 代码构建 libadwaita 界面（D29）"]
         CTL["操作控制器<br/>单飞 + 工作线程 + channel 回主线程"]
+        ENV["环境引导（D30/D33）<br/>自检 + 装载/修复状态机 + 胶囊与向导"]
+        SET["设置持久化（D28）<br/>主题/语言三态 + KeyFile"]
         I18N["i18n 资源<br/>zh-CN（默认）/ en"]
     end
     subgraph proto["crates/magi-protocol（纯协议，无 UI 依赖）"]
@@ -114,7 +117,8 @@ graph LR
     TRT --> LIN
     LIN -->|"SECURITY PROTOCOL IN / OUT"| DEV
     I18N --- UI
-```
+    ENV --- UI
+    SET --- UI
 
 依赖方向为单向：`magi-app` → `magi-protocol` → `magi-transport`。`magi-protocol` 不得依赖 GTK 与任何 UI 类型；`magi-app` 不得直接构造 CDB 或令牌流。§3.1 不负责：设备侧固件的内部状态命名、操作系统内核驱动行为、文件系统层。
 
@@ -665,16 +669,16 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 
 > **作为** 用户，**我希望** 在一个窗口里看到设备状态与操作入口，并能切到诊断与关于页，**以便** 不必理解协议细节。
 > **优先级:** P0
-> **归因:** D09、D10、D24、D25、D28、D29、D30、D31
+> **归因:** D09、D10、D24、D25、D28、D29、D30、D31、D33
 > **验收标准:**
 > - Given 应用启动；When 主窗口显示；Then 呈现左侧深色侧边栏导航与右侧主区，导航项为三类页面（仪表盘、诊断、关于），导航项数量 ≥ 3，且当前项有选中态（任一时刻选中项唯一）。
-> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备分组（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作分组（解锁与校验口令按设备态启用或禁用；口令管理为禁用态并附证据缺口说明）、进度与结果反馈区。
+> - Given 位于仪表盘页；When 查看设备区；Then 呈现设备分组（产品名、VID/PID、设备节点或平台通道）、锁定状态徽章（与 `DeviceState` 三个取值一一对应）、操作分组（解锁与校验口令按设备态启用或禁用；设置/修改/删除口令为三个禁用入口并附证据缺口说明）、进度与结果反馈区。
 > - Given 位于诊断页；When 查看内容；Then 呈现诊断记录的只读列表与脱敏导出按钮，导出内容在写出前再经口令脱敏过滤与字节形态纵深过滤。
 > - Given 位于关于页；When 查看内容；Then 呈现应用版本与 t7Shield-protocol 协议仓库引用。
 > - Given 任一界面定义；When 渲染；Then 界面全部由 Rust 代码构建（不使用 `.ui` 模板）；可显示文案一律经 i18n 键渲染，Rust 代码中不内联可显示字符串。
 > - Given 口令对话框打开；When 输入口令；Then 输入恒不回显（`GtkPasswordEntry` 的类型固有行为，代码不设置任何可见性属性）、明文切换图标关闭（`show-peek-icon = false`）；提交后口令缓冲立即 zeroize；口令不进入诊断记录、剪贴板与任何持久化存储。
 > - Given 任一页面；When 点击 HeaderBar 的首选项入口；Then 打开设置对话框，呈现主题（跟随系统/浅色/深色）与语言（跟随系统/中文/English）两组选择；更改立即生效并持久化，下次启动保持。
-> - Given 应用启动；When 主窗口显示；Then 默认尺寸按窗口所在显示器的工作区推导而非固定像素常数；高字体缩放下内容区可滚动、不依赖固定像素高度（D31）。
+> - Given 应用启动；When 主窗口显示；Then 默认尺寸按默认显示器的可用几何推导而非固定像素常数（GDK4 无工作区 API，面板避让与窗口落位由窗口管理器负责，D31）；高字体缩放下内容区可滚动、不依赖固定像素高度。
 > - Given 环境存在未解决问题；When 主窗口显示；Then HeaderBar 右上角呈现环境胶囊（警示色）；点击打开引导向导（D30）。
 
 应用身份契约（显示名与 APP_ID 为暂定值，调整时按 §9 变更流程更新本表与 D24）：
@@ -693,7 +697,7 @@ pub fn delete_password(_pwd: &[u8]) -> Result<(), ProtocolError> {
 | 主区 · 页面 | 每页一个 `AdwPreferencesPage`（仪表盘 / 诊断 / 关于） | 三个页名与导航项一一对应，页面栈中均可取到 |
 | 主区 · 仪表盘 | 设备分组（`AdwPreferencesGroup` + `AdwActionRow`）：产品名、VID/PID、设备节点或平台通道 | 三个字段齐备；取值与 §4.1 的枚举结果一致 |
 | 主区 · 仪表盘 | 锁定状态徽章（ActionRow 尾部） | 与 `DeviceState` 的三个取值一一对应，无第四种呈现 |
-| 主区 · 仪表盘 | 操作分组（`AdwButtonRow`）：解锁、校验口令、口令管理 | 前两者按设备态启用或禁用；口令管理恒为禁用态并附证据缺口说明（D14） |
+| 主区 · 仪表盘 | 操作分组（`AdwButtonRow`）：解锁、校验口令、设置口令、修改口令、删除口令 | 前两者按设备态启用或禁用；设置/修改/删除口令为三个恒禁用入口并附证据缺口说明（D14） |
 | 主区 · 仪表盘 | 进度与结果反馈 | 进度由 `UnlockStep` 驱动；结果显示 §4.7 的判据结论 |
 | 诊断页 | 诊断记录只读列表 + 脱敏导出按钮 | 列表不可编辑；导出前执行口令脱敏（D10） |
 | 口令对话框 | `GtkPasswordEntry` + 提交按钮 | 输入恒不回显（类型固有）；代码不设可见性属性；`show-peek-icon = false` |
@@ -710,71 +714,33 @@ pub const APP_ID: &str = "dev.rikki.MagiShield";
 pub const APP_DISPLAY_NAME_KEY: &str = "app.display-name";
 
 /// 主窗口（D29）：界面全部由 Rust 代码构建——无 `.ui` 模板、无 `#[template_child]`；
-/// 文案一律经 i18n 键在装配时赋值。
+/// 文案一律经 i18n 键在装配时赋值。元素、状态与判据见上方布局契约表
+/// （导航容器、页面栈、设备分组、五个操作入口、进度与结果反馈、首选项入口、
+/// 环境胶囊）；内部控件为 imp 字段，不构成公开契约。
 pub struct MainWindow(ObjectSubclass<imp::MainWindow>) @extends adw::ApplicationWindow …;
-
-impl MainWindow {
-    //（以下访问器为示意；实现为 imp 结构体字段，经 window.imp() 取用）
-    /// 侧边栏导航容器：`GtkListBox` 挂内置 `.navigation-sidebar` 类，导航项 >= 3。
-    fn nav_list(&self) -> gtk::ListBox;
-    /// 页面栈：仪表盘 / 诊断 / 关于（页名与 `NavItem::page_name()` 一致）。
-    fn content_stack(&self) -> gtk::Stack;
-    /// 仪表盘设备分组：设备行与设备信息行（`AdwPreferencesGroup` + `AdwActionRow`）。
-    fn device_group(&self) -> adw::PreferencesGroup;
-    /// 设备行：锁定状态徽章以 `AdwActionRow` 尾部承载（与 `DeviceState` 一一对应）。
-    fn device_row(&self) -> adw::ActionRow;
-    /// 操作分组：五个 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令）。
-    fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow>;
-    /// 首选项入口（HeaderBar 末端按钮）。
-    fn action_preferences(&self) -> gtk::Button;
-    /// 进度与结果反馈：进度条（`UnlockStep` 驱动）与结果行。
-    fn progress(&self) -> gtk::ProgressBar;
-    fn result_label(&self) -> gtk::Label;
-    /// 环境胶囊（HeaderBar 末端）：环境存在未解决问题时以警示色呈现，点击打开引导向导（D30）。
-    fn environment_pill(&self) -> gtk::Button;
-}
 
 // 诊断页（页面栈页）：只读记录（`GtkTextView` 卡片）与脱敏导出入口（`AdwButtonRow`）。
 // 关于页（页面栈页）：版本 / 适用设备 / 协议参考 / 运行环境四行（`AdwActionRow`）。
 
-/// 主窗口默认尺寸裁决（D31）：按窗口所在显示器的工作区推导，含上下限；不写死像素常数。
+/// 主窗口默认尺寸裁决（D31）：按默认显示器的可用几何推导，含上下限；不写死像素常数。
 pub fn compute_default_size(workarea: (i32, i32)) -> (i32, i32);
 
-/// 口令对话框（代码构建）：输入恒不回显，`show-peek-icon = false`。
+/// 口令对话框（代码构建）：输入恒不回显，`show-peek-icon = false`；提交后 zeroize。
 pub struct PasswordDialog(ObjectSubclass<imp::PasswordDialog>) @extends adw::Dialog …;
 
-impl PasswordDialog {
-    fn entry(&self) -> gtk::PasswordEntry;
-    fn submit(&self) -> gtk::Button;
-}
-
-/// 设置对话框（D28，代码构建）：主题与语言两组三态选择，更改立即生效并持久化。
+/// 设置对话框（D28，代码构建）：主题与语言两组三态选择，更改即时生效并持久化。
 pub struct SettingsDialog(ObjectSubclass<imp::SettingsDialog>) @extends adw::PreferencesDialog …;
 
-impl SettingsDialog {
-    fn theme_row(&self) -> adw::ComboRow;
-    fn language_row(&self) -> adw::ComboRow;
-}
-
-/// 引导向导（D30，代码构建）：逐项列出环境问题与修复动作，可从环境胶囊再次打开。
+/// 引导向导（D30/D33，代码构建）：逐项列出环境问题与修复动作（装载模块、修复设备
+/// 权限、重新检查），可从环境胶囊再次打开；控件选型为 `AdwDialog` + 标题栏关闭。
 pub struct EnvironmentDialog(ObjectSubclass<imp::EnvironmentDialog>) @extends adw::Dialog …;
-
-impl EnvironmentDialog {
-    /// 问题分组：每个 `EnvironmentIssue` 一行（标题 + 建议动作文案）。
-    fn issue_list(&self) -> adw::PreferencesGroup;
-    /// 修复动作：重新装载内核模块（固定命令 `pkexec modprobe sg`）。
-    fn action_load_module(&self) -> adw::ButtonRow;
-    /// 修复动作：重新执行环境自检。
-    fn action_recheck(&self) -> adw::ButtonRow;
-}
 
 pub struct Password(Zeroizing<Vec<u8>>);   // 提交后由 zeroize 清除
 ```
-
-主窗口默认尺寸按窗口所在显示器的工作区推导（`compute_default_size` 统一裁决，含上下限），不写死像素常数（D31）；环境胶囊与引导向导的完整契约见 §4.13。
+主窗口默认尺寸按默认显示器的可用几何推导（`compute_default_size` 统一裁决，含上下限；GDK4 无工作区 API，落位归窗口管理器），不写死像素常数（D31）；环境胶囊与引导向导的完整契约见 §4.13（修复动作：重新装载内核模块、修复设备权限、重新检查）。界面代码按窗口/对话框/页面分文件组织，单文件承担单一界面单元的构建与装配（D29 组织约束）。
 
 正常示例：锁定态下打开应用 → 仪表盘页显示设备卡与锁定徽章 → 点击「解锁」→ 弹出不回显口令对话框 → 提交后在结果区显示进度与最终判据；切换到诊断页可查看只读日志并导出脱敏文本。
-异常示例：口令为空时提交 → 对话框就地提示并保持打开，不构造任何报文；口令管理入口被点击 → 呈现证据缺口说明，不打开对话框、不下发命令。
+异常示例：口令为空时提交 → 对话框就地提示并保持打开，不构造任何报文；任一口令写入口被点击 → 呈现证据缺口说明，不打开对话框、不下发命令。
 
 ### 4.12 REQ-012 线程模型与错误呈现
 
@@ -844,14 +810,13 @@ where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> +
 
 > **作为** 用户，**我希望** 客户端启动时自检运行环境并在缺失时引导修复，**以便** 不必手工排查内核模块与设备权限。
 > **优先级:** P1
-> **归因:** D30
+> **归因:** D30、D33
 > **验收标准:**
 > - Given 应用启动且 `sg` 内核模块未装载；When 环境自检完成；Then 自动发起一次模块装载（固定命令 `pkexec modprobe sg`，经 polkit 图形授权向用户索要 root）；装载成功 → 复检并继续设备扫描。
 > - Given 用户拒绝授权或装载失败；When 呈现；Then HeaderBar 右上角呈现警示色环境胶囊，点击打开引导向导；向导逐项列出环境问题与修复动作（重新装载、重新检查）及手动指引。
-> - Given 装载成功但设备节点不可读写；When 自检；Then 呈现权限问题条目（胶囊与向导），附权限指引，客户端不自行提权。
-> - Given 环境就绪；When 任一时刻；Then 胶囊不呈现；问题复发（如模块被卸载）时胶囊恢复呈现。
+> - Given 装载成功但设备节点不可读写；When 自检；Then 呈现权限问题条目（胶囊与向导）；修复设备权限动作经 polkit 授权后以 `setfacl` 即时授予当前登录用户设备节点读写（启动自检路径自动发起一次，向导内可显式重试，D33；零持久化痕迹）。
+> - Given 环境就绪；When 任一时刻；Then 胶囊不呈现；问题复发（如模块被卸载）时胶囊恢复呈现——周期设备重扫的每一轮附带一次环境自检（与 §4.1 的重扫同周期、同工作线程，只读 sysfs 与设备节点），复发按转换表进入 `Issue` 并由用户重试。
 > - Given 引导向导打开；When 用户点击重新检查；Then 重新执行自检并刷新问题列表。
-
 契约：
 
 ```rust
@@ -877,6 +842,11 @@ pub fn inspect_environment_in(sys_root: &Path, dev_root: &Path) -> EnvironmentRe
 /// 模块装载的固定命令（白名单出口，不得拼接任何用户输入；经 polkit 图形授权）。
 pub fn module_load_command() -> &'static [&'static str];   // ["pkexec", "modprobe", "sg"]
 
+/// 权限修复命令（D33：`pkexec setfacl -m u:<user>:rw <nodes…>` 即时 ACL）。
+/// argv 直传（不经过 shell），`user`/`nodes` 均经字符白名单校验；
+/// 返回 `None` 表示无法确定当前用户或找不到 setfacl（呈现手动指引）。
+pub fn permission_fix_commands(user: Option<&str>, nodes: &[String]) -> Option<Vec<String>>;
+
 /// 环境就绪态（D30；应用外壳态，与协议态分层——不进 §3.2）。
 pub enum EnvironmentState {
     /// 尚未执行自检。
@@ -892,6 +862,9 @@ pub enum EnvironmentState {
     Loading(Vec<EnvironmentIssue>),
     /// 装载被拒或失败；问题清单随状态携带。
     LoadFailed(Vec<EnvironmentIssue>),
+    /// 权限修复在飞（单飞：同时最多一次）；括号内为触发本次修复的问题清单，
+    /// 修复失败时原样带回（D33）。
+    Fixing(Vec<EnvironmentIssue>),
 }
 
 /// 环境就绪态迁移事件。
@@ -900,6 +873,9 @@ pub enum EnvironmentEvent {
     LoadRequested,
     LoadSucceeded,
     LoadFailed,
+    FixPermissionsRequested,
+    FixPermissionsSucceeded,
+    FixPermissionsFailed,
 }
 
 /// 环境就绪态迁移动作。
@@ -908,16 +884,30 @@ pub enum EnvironmentAction {
     None,
     /// 在工作线程发起模块装载（单飞）。
     LoadModule,
+    /// 在工作线程发起权限修复（单飞）。
+    FixPermissions,
     /// 呈现环境胶囊。
     ShowPill,
     /// 隐藏环境胶囊。
     HidePill,
 }
 
-/// 纯迁移函数：给定当前态与事件，返回下一态与对外动作。
+/// 一次性自动修复的尝试记录（审计修订：纪律收进纯状态机，由调用方随窗口存活持有，
+/// UI 层不得另设补偿标志）。启动引导链内各动作至多自动发起一次，循环由置位排除。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AutoAttempts {
+    /// 本次启动是否已自动装载过模块。
+    pub module: bool,
+    /// 本次启动是否已自动修复过权限。
+    pub permissions: bool,
+}
+
+/// 纯迁移函数：给定当前态、事件与自动尝试记录，返回下一态与对外动作；
+/// 命中自动修复出口时同步置位 `AutoAttempts` 对应标志。
 pub fn next_environment_state(
     state: EnvironmentState,
     event: EnvironmentEvent,
+    autos: &mut AutoAttempts,
 ) -> (EnvironmentState, EnvironmentAction);
 ```
 
@@ -926,21 +916,26 @@ pub fn next_environment_state(
 | 当前态 | 事件 | 下一态 | 动作 |
 |---|---|---|---|
 | `Unknown` / `Checking` | `CheckDone`（问题为空） | `Ready` | `HidePill` |
-| `Unknown` / `Checking` | `CheckDone`（含 `SgModuleMissing`） | `Loading` | `LoadModule`（启动路径的自动装载） |
-| `Unknown` / `Checking` | `CheckDone`（其余非空问题） | `Issue(issues)` | `ShowPill` |
-| `Loading` | `LoadSucceeded` | `Checking`（复检，回到启动自检路径） | `None` |
+| `Unknown` / `Checking` | `CheckDone`（含 `SgModuleMissing` 且 `autos.module` 未置位） | `Loading` | `LoadModule`（自动装载，置位 `autos.module`） |
+| `Unknown` / `Checking` | `CheckDone`（含 `SgNodePermissionDenied`、无模块缺失且 `autos.permissions` 未置位） | `Fixing` | `FixPermissions`（自动修复，置位 `autos.permissions`，D33） |
+| `Unknown` / `Checking` | `CheckDone`（问题仍在但对应自动尝试已用，或其余非空问题） | `Issue(issues)` | `ShowPill`（重试交还用户） |
+| `Loading` | `LoadSucceeded` | `Checking`（引导链内复检轮） | `None` |
 | `Loading` | `LoadFailed` | `LoadFailed`（保留原问题清单） | `ShowPill` |
-| `Loading` | `LoadRequested` | `Loading` | `None`（单飞：拒绝并发装载） |
+| `Fixing` | `FixPermissionsSucceeded` | `Checking`（引导链内复检轮） | `None` |
+| `Fixing` | `FixPermissionsFailed` | `Issue`（保留原问题清单） | `ShowPill` |
+| `Loading` / `Fixing` | `LoadRequested` / `FixPermissionsRequested` | 保持原态 | `None`（单飞：在飞期间拒绝并发装载与修复） |
 | `Issue` / `LoadFailed` | `LoadRequested` | `Loading` | `LoadModule`（用户显式重试） |
+| `Issue` / `LoadFailed` | `FixPermissionsRequested` | `Fixing` | `FixPermissions`（用户显式重试，D33） |
+| `Issue` / `LoadFailed` / `Ready` | `CheckDone`（空） | `Ready` | `HidePill`（幂等） |
 | `Issue` / `LoadFailed` | `CheckDone`（非空） | `Issue`（清单刷新） | `ShowPill` |
-| `Issue` / `LoadFailed` | `CheckDone`（空） | `Ready` | `HidePill` |
-| `Ready` | `CheckDone`（空） | `Ready` | `HidePill`（幂等） |
+| `Ready` | `CheckDone`（非空，周期重扫发现复发） | `Issue(issues)` | `ShowPill`（复发不自动修复：重试归用户） |
+| 未列组合 | 任意 | 保持现状 | `None`（总则：未定义组合一律保持现状，不得臆造迁移） |
 
 纪律（规范性条款）：
-
-- 自动装载只发生在启动自检路径，每次启动至多一次；失败或拒绝后的重试必须由用户在引导向导中显式触发（与 D11 同精神：重试决策归用户）。
-- 装载命令为固定白名单 `["pkexec", "modprobe", "sg"]`，不得拼接任何用户输入；`pkexec` 缺失时直接呈现手动指引，不降级为其他提权方式。
-- 环境自检只读世界可读的 sysfs 与设备节点，不阻塞 UI 首帧；模块装载在工作线程执行且单飞。
+- 自动修复（模块装载与权限修复）只在启动引导链（`Unknown`/`Checking`）内由状态机按 `AutoAttempts` 各至多自动发起一次；`Ready` 后的问题复发与失败重试一律由用户在引导向导中显式触发（与 D11 同精神：重试决策归用户）。UI 层不得在状态机之外另设自动重试或补偿标志。
+- 装载命令为固定白名单 `pkexec modprobe sg`；权限修复以 argv 直传 `pkexec setfacl`（不经过 shell，无注入面）；`pkexec` 或 `setfacl` 不可用时直接呈现手动指引，不降级为其他提权方式。
+- 权限修复零持久化（D33）：只对现有设备节点执行 `setfacl` 即时 ACL 授予——不写规则文件、不改属主与用户组、不动节点 mode、不落任何系统配置；重插、重启或解锁重枚举后 ACL 自然消失，需要时再次修复即可。`user` 取自进程环境（`USER`/`LOGNAME`）并限字母数字与 `_`/`-`/`.`，`nodes` 来自 sysfs 扫描且限 `/dev/sg` + 数字。
+- 环境自检只读世界可读的 sysfs 与设备节点，不阻塞 UI 首帧；装载与修复在工作线程执行且单飞。
 - 胶囊只在 `Issue` / `LoadFailed` 两态呈现；其余态隐藏。设备扫描在环境未就绪时照常进行，预期空态。
 
 正常示例：新机器首次启动 → 自检发现模块缺失 → polkit 授权弹窗 → 装载成功 → 自动复检 → 环境就绪，胶囊从未出现，设备扫描继续。
@@ -971,7 +966,8 @@ pub fn next_environment_state(
 | `AppError::EmptyPassword` | `magi-app` | 口令输入为空 | 独立变体 | 对话框就地提示，不构造报文 |
 | `AppError::Busy` | `magi-app` | 同设备已有在飞操作 | 独立变体 | UI 提示已有操作在执行 |
 | `EnvironmentIssue::SgModuleMissing` | `magi-app` | 自检发现 `/sys/module/sg` 不存在 | 独立类型，不进 `AppError` 链 | 环境胶囊与引导向导（D30） |
-| `EnvironmentIssue::SgNodePermissionDenied { node }` | `magi-app` | 设备节点存在但当前用户不可读写 | 独立类型，不进 `AppError` 链 | 环境胶囊与引导向导，附权限指引，不自身提权（D30） |
+| `EnvironmentIssue::SgNodePermissionDenied { node }` | `magi-app` | 设备节点存在但当前用户不可读写 | 独立类型，不进 `AppError` 链 | 环境胶囊与引导向导，附权限指引；经用户授权后以 `setfacl` 即时修复，未经授权不提权（D30/D33） |
+| 权限修复前置不满足 | `magi-app` | 无法确定当前用户（`USER`/`LOGNAME` 缺失或未过白名单）、`setfacl` 不在 `PATH`、节点清单为空三者任一 | 独立事实条目，不发起 `pkexec`，按修复失败处理 | 引导向导呈现手动指引（D33） |
 
 判定链的关键区分（全部为事实层结论）：
 
@@ -990,7 +986,7 @@ pub fn next_environment_state(
   - UI 主线程单帧阻塞 ≤ 100 ms；所有协议 I/O 在工作线程。
 - **可用性**
   - 协议层零自动重放：任何失败都不自动重发命令（重试决策归 UI 与用户层，D11）。
-  - 环境自检只读 sysfs 与设备节点，不阻塞 UI 首帧；模块装载在工作线程执行且单飞（同时最多一个在飞装载）（D30）。
+  - 环境自检只读 sysfs 与设备节点，不阻塞 UI 首帧；装载与修复在工作线程执行且单飞（D30/D33）。
   - UI 层允许用户显式重试：口令被拒最多重试 3 次，每次均由用户重新提交；超过 3 次后本次会话禁用「解锁」入口，直到用户重新打开对话框。
   - 单飞：每个设备同时最多 1 个在飞操作；新请求在已有操作期间返回 `AppError::Busy`。
   - 恢复窗口：设备因重枚举消失后，客户端在 30 s 观察窗口内继续轮询设备节点；窗口结束后用户可手动重新发起。
@@ -999,14 +995,14 @@ pub fn next_environment_state(
   - 口令缓冲在报文构造完成后立即 zeroize，并在结构体 `Drop` 时二次清零；zeroize 是实现与测试的硬性要求。
   - 零日志：口令内容与口令长度都不进入诊断记录；诊断记录只允许三类字段——CDB 字节、传输方向、响应长度；请求载荷与令牌流一律不记录（StartSession 的令牌流含口令明文）；导出侧再做字节形态纵深过滤（命中疑似口令的十六进制形态即拦截），脱敏纪律与 t7Shield-protocol 的 `Log.redact()` 等价。
   - 零剪贴板、零持久化：口令不写入剪贴板、不写入配置文件、不写入任何缓存或崩溃转储可读的位置。
-  - 权限：除引导内经用户显式确认的内核模块装载（固定命令 `pkexec modprobe sg`，polkit 图形授权）外，Linux 上不请求提权；设备节点不可读写时返回 `PermissionDenied` 与权限指引，不自身提权（D30）。
+  - 权限：除引导内经用户显式确认的内核模块装载与设备节点即时 ACL 授予（`pkexec modprobe sg` 与 `pkexec setfacl`，polkit 图形授权，D30/D33）外，Linux 上不请求提权；设备节点不可读写时返回 `PermissionDenied` 与权限指引，未经授权不提权并附手动指引。
 - **合规与保留**
   - 客户端不落盘任何口令或协议原始帧；诊断信息只保留在内存环形缓冲（上限 512 条）。
   - 用户可显式导出脱敏诊断文本；导出前必须再次执行口令脱敏过滤与字节形态纵深过滤。
 - **容量与背压**
   - 响应缓冲固定 2048 B、Discovery 缓冲固定 4096 B；禁止按响应内容动态扩容。
   - 命令队列上限 1（单飞）；溢出行为为拒绝新请求，不排队。
-  - 工作线程上限：每设备 1 个；应用同时连接受理设备上限 8 个（超出呈现「设备数量超出上限」）。
+  - 工作线程上限：每设备 1 个；应用同时连接受理设备上限 8 个，超出时设备分组呈现提示文案（i18n 键 `limit.devices_exceeded`），该提示为 UI 空态文案、不进 §5 错误链。
 - **国际化**
   - 默认语言 `zh-CN`；提供 `en` 资源；所有用户可见文案经 i18n 键渲染，不在代码中内联可显示字符串。
   - 语言优先级：应用内显式选择 > 环境变量（LC_ALL/LC_MESSAGES/LANG）> 默认 `zh-CN`；主题提供跟随系统/浅色/深色三态，默认深色；两项选择持久化于用户配置目录，更改即时生效（D28）。
@@ -1022,8 +1018,8 @@ pub fn next_environment_state(
 | Discovery 过短 | 响应长度 < `0x31` | 返回发现失败，禁止后续命令 | 操作入口保持禁用 | `test_level0_parses_base_comid` |
 | 无 Opal SSC 描述符 | 描述符区无 feature `0x0203` | 判定该设备不走 A 路 | 呈现「设备路径不符」 | `test_level0_parses_base_comid` |
 | 缺 Locking 描述符 | 有 Opal SSC 描述符但无 feature `0x0002` | 返回缺 Locking 描述符错误，不再推断锁定状态 | 呈现「无法判定锁定状态」，入口保持禁用 | `test_level0_parses_base_comid` |
-| 0xFD 私有协议被请求 | 任何实现尝试协议字节 `0xFD` | 拒绝构造并返回通道不存在错误 | 呈现通道不存在 | `test_unsupported_security_protocol` |
-| 命令超时 | 单条命令超过 30 s | 返回超时错误，终止流程 | 呈现超时与建议动作 | `test_command_timeout_maps_to_timeout_error` |
+| 设备节点权限不足 | 节点存在但当前用户不可读写 | 呈现权限问题；修复设备权限动作经授权以 `setfacl` 即时授予读写（零持久化），未经授权不提权 | 胶囊与向导呈现；被拒或失败时附手动指引 | `test_permission_fix_command_whitelist` |
+| 权限修复前置不满足 | 无法确定当前用户 / `setfacl` 不可用 / 节点清单为空 | 不发起 `pkexec`，直接按修复失败处理 | 向导呈现手动指引 | `test_permission_fix_command_whitelist` |
 | 重枚举期间设备节点消失 | 解锁收尾后设备重枚举 | 视为观察窗口内的正常现象，继续轮询 | 呈现「等待重枚举」 | `test_device_gone_during_reenumeration` |
 | 空口令提交 | 对话框提交空输入 | 拒绝请求，不构造报文 | 对话框就地提示 | `test_empty_password_rejected` |
 | 并发触发操作 | 已有在飞操作 | 拒绝新请求 | 呈现「已有操作在执行」 | `test_duplicate_trigger_is_busy` |
@@ -1032,7 +1028,6 @@ pub fn next_environment_state(
 | 应用退出时会话仍打开 | 用户关闭窗口 | 在进程存活窗口内尽力 EndSession，不做命令级等待 | 诊断记录写入清理结果，不阻塞退出 | `test_session_closed_on_abort` |
 | `sg` 模块缺失 | 启动自检发现 `/sys/module/sg` 不存在 | 自动发起一次装载（polkit 授权）；成功 → 复检 → 就绪 | 拒绝或失败 → 胶囊呈现，向导可重试 | `test_environment_report_missing_module` |
 | 装载被拒或失败 | pkexec 授权被拒 / 命令非零退出 / pkexec 缺失 | 进入 `LoadFailed` 态 | 胶囊呈现；点击打开引导向导 | `test_environment_state_transitions` |
-| 设备节点权限不足 | 节点存在但当前用户不可读写 | 呈现权限问题与指引（用户组或 udev 规则），不自身提权 | 胶囊与向导呈现 | `test_environment_report_permission_denied` |
 
 ## 8. 验收标准
 
@@ -1051,8 +1046,8 @@ pub fn next_environment_state(
 - AC-013（对 GOAL-1、范围）实现中不存在固件更新、安全擦除、0xFD 私有通道与 Windows、macOS 平台通路相关代码路径。
 - AC-014（对 GOAL-4、NFR 国际化）默认 `zh-CN` 资源齐备，`en` 资源齐备，代码无内联可显示字符串。
 - AC-015（对全部 GOAL）`python tools/barriers.py` 在 crate 落地后全绿；在此之前屏障如实输出未接线状态。
-- AC-016（对 GOAL-6、「环境就绪引导」）启动自检发现 `sg` 模块缺失时自动发起一次经授权的装载；拒绝或失败时环境胶囊呈现、引导向导可重试；设备节点权限不足时呈现指引且不自身提权。
-- AC-017（对 GOAL-4、D31）主窗口默认尺寸按窗口所在显示器的工作区推导，不存在固定像素尺寸的窗口写法。
+- AC-016（对 GOAL-6、「环境就绪引导」）启动自检发现 `sg` 模块缺失或节点权限不足时，自动发起一次经 polkit 授权的修复（`modprobe` 装载 / `setfacl` 即时 ACL）；拒绝、失败或前置不满足（无法确定用户、`setfacl` 不可用、节点为空）时环境胶囊呈现，引导向导可显式重试并附手动指引。
+- AC-017（对 GOAL-4、D31）主窗口默认尺寸按默认显示器的可用几何推导（GDK4 无工作区 API，`workarea` 判据不成立；面板避让与窗口落位由窗口管理器负责），无显示器环境（无头测试）回落固定默认尺寸。
 
 ## 9. 决策日志
 
@@ -1064,8 +1059,7 @@ pub fn next_environment_state(
 | D04 | 报文 `+0x14` = TSN = StartSession 响应 token[5]；`+0x18` = HSN = token[4]；填反会导致设备静默丢弃会话内命令 | §4、§7 | `+0x14`/`+0x18` 在 §4 逐字节写明；锚点 `test_session_ids_swap_mapping` |
 | D05 | 会话内 `Set` 应答的 `data_len = 0` 空应答判为致命错误（会话号错位信号） | §5、§7 | §5 出现 `data_len = 0` 判定；锚点 `test_empty_response_is_fatal` |
 | D06 | 解锁成功判据按「真实分区表并挂载 > Locking flags `0x1F`→`0x3B` > PID 变化」排序；设备自行重枚举，客户端不发送重枚举触发命令 | §4、§6 | 判据顺序在 §4 固定；客户端无重枚举命令 |
-| D07 | Linux 传输实现为 `sg_io`（SG_IO ioctl 下发 12 字节 CDB），不依赖三星私有驱动 | §4 | `sg_io` 在 §4 指明；契约 `pub trait Transport` 存在 |
-| D08 | macOS 目标行为：应用可启动、可做 USB/IOKit 描述符侦察；盘操作返回 `TransportUnavailable` 并在 UI 呈现；该限制是已证实的平台事实，不得描述为待实现能力 | §4、§5 | `TransportUnavailable` 出现在契约与错误模型；禁止把该限制写成待实现功能 |
+| D08 | 运行目标平台收敛为仅 Linux（D27）后，`TransportError::Unavailable` 只保留一个语义：非 Linux 平台的 `open` 路径直接返回通道不可用并在 UI 呈现；该限制是已证实的平台事实，不得描述为待实现能力，非 Linux 平台的运行时行为不进 spec 管辖 | §4、§5 | `TransportUnavailable` 出现在契约与错误模型；禁止把该限制写成待实现功能 |
 | D09 | UI 技术栈为 Rust + GTK4 + libadwaita，界面全部由 Rust 代码构建（不使用 `.ui` 模板，见 D29） | §4 | §4.11 出现「Rust 代码构建」；`app-code-built-ui` 契约命中 |
 | D10 | 口令内存纪律：zeroize 且零日志、零剪贴板、零持久化；日志脱敏纪律与协议仓库参考实现等价 | §4、§6 | `zeroize` 出现在契约与 NFR；锚点 `test_password_zeroized_after_submit` |
 | D11 | 协议层不做自动重放；重试决策归 UI 与用户层，且每次重试都由用户显式触发 | §6 | §6 出现「自动重放」边界说明 |
@@ -1085,11 +1079,12 @@ pub fn next_environment_state(
 | D25 | 界面目标定义为「应用外壳」：左侧深色侧边栏导航（仪表盘 / 诊断 / 关于，当前项有选中态）+ 仪表盘区（设备卡、锁定状态徽章、操作区、进度与结果反馈）+ 诊断页（环形缓冲只读列表、脱敏导出）+ 关于页（版本与协议仓库引用）；只写元素、状态与可验证判据，不写像素级细节 | §4.11、§8 | 布局契约表与六条验收标准齐备；像素级写法零命中（由 manifest 的 D25 禁止规则校验） |
 | D26 | 三处实现证实的订正：① 口令对话框不依赖任何可见性属性——`GtkPasswordEntry` 输入恒不回显，代码只设 `show-peek-icon = false` 关闭明文切换图标；② 诊断记录字段收敛为 CDB 字节 / 传输方向 / 响应长度三类，请求载荷与令牌流一律不记录（StartSession 令牌流含口令明文），导出侧再加字节形态纵深过滤；③ 取消收尾边界：窗口关闭路径的 EndSession 以进程存活为限且不可观察，应用内取消须先收尾再退出 | §4.11、§6、§7、§8 | §4.11 出现 `show-peek-icon`；§6 出现诊断记录三类字段且旧字段清单零命中；§6 出现纵深过滤 |
 | D27 | 运行目标平台收敛为仅 Linux：移除 macOS 平台目标及其全部产品行为（原「macOS 平台行为契约」需求整节、USB/IOKit 描述符侦察通道、平台降级 UI 与 macOS 专属呈现分支）；`TransportError::Unavailable` 变体保留给非 Linux 平台的 `open` 路径，非 Linux 平台的运行时行为不进 spec 管辖；macOS 传输通道调查记录（`issues/2026-09-14-macOS传输通道.md`）改为 wontfix，`prototype/macos-scsi-dext/` 随之移除 | §1、§3.1、§4、§5、§6、§7、§8 | 正文除 §1.1 背景事实与 §1.3 非目标外零 macOS 表述（由 manifest 的 D27 禁止规则校验）；锚点 `test_macos_transport_unavailable` 删除；实现中不存在 macOS 平台通路相关代码路径（AC-013） |
-| D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染全部静态文案）；侧边栏导航仍为三类页面不变 | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
+| D28 | 应用内设置：HeaderBar 提供首选项入口，打开设置对话框；主题为跟随系统/浅色/深色三态，默认深色；界面语言为跟随系统/中文/English 三态，默认跟随系统，语言优先级 = 应用内显式选择 > 环境变量 > 默认 zh-CN；两项选择持久化于用户配置目录（glib KeyFile），更改即时生效（主题经 AdwStyleManager，语言经 rust_i18n 重渲染）；语言切换的黑盒判据：切换后**所有可见文案**——静态标签与动态呈现区（结果区、设备分组、诊断视图）以及打开中的口令/设置/引导对话框——均为新语言，无旧语言残留；侧边栏导航仍为三类页面不变 | §4.11、§6、§9 | §4.11 出现首选项入口与设置对话框契约；§6 出现语言优先级链 |
 | D29 | 界面构建与组件标准化：界面全部由 Rust 代码构建（无 `.ui` 模板、无 `CompositeTemplate`）；全部采用 libadwaita 原生组件与标准页面模式——页面为 `AdwPreferencesPage`，分组为 `AdwPreferencesGroup`，设备信息为 `AdwActionRow`（状态徽章置于行尾），操作入口为 `AdwButtonRow`（解锁 / 校验口令 / 设置 / 修改 / 删除口令），侧边栏导航为挂内置 `.navigation-sidebar` 类的 `GtkListBox`，设置对话框为 `AdwPreferencesDialog` + `AdwComboRow` | §4.11、§9 | §4.11 出现 `AdwPreferencesPage` 与 `AdwButtonRow`；`app-code-built-ui` 契约命中 |
 | D30 | 环境就绪引导：启动自检运行环境（`sg` 内核模块已装载、设备节点存在且当前用户可读写）；模块缺失时自动发起一次装载（固定命令 `pkexec modprobe sg`，经 polkit 图形授权向用户索要 root），装载在工作线程执行且单飞；授权被拒、装载失败或权限不足时，HeaderBar 右上角呈现警示色环境胶囊，点击打开引导向导，向导逐项列出环境问题并提供修复动作（重新装载、重新检查）与手动指引；环境就绪后胶囊消失，问题复发时恢复。除该引导内的模块装载外，应用不请求提权（取代 §6 原「不自身提权」的绝对表述） | §4.11、§4.13、§5、§6、§7、§8 | §4.13 出现 `inspect_environment`/`EnvironmentState` 契约；§4.11 出现环境胶囊与引导向导；§6 安全条款写入 polkit 授权边界 |
-| D31 | 窗口尺寸自适应：主窗口默认尺寸按窗口所在显示器的工作区比例推导（`compute_default_size` 统一裁决，含上下限），不写死像素值；内容区可滚动，在高字体缩放下不依赖固定像素高度；比例与上下限的具体数值属实现细节，不进 spec | §4.11、§8、§9 | §4.11 出现 `compute_default_size` 契约与「工作区」判据；窗口固定像素尺寸写法零命中（由 manifest 的 D25 像素级禁止规则覆盖） |
+| D31 | 窗口尺寸自适应：主窗口默认尺寸按默认显示器的可用几何比例推导（`compute_default_size` 统一裁决，含上下限），不写死像素值；GDK4 已移除工作区（workarea）API、Wayland 呈现前不可知「窗口所在显示器」，判据以默认显示器几何为准，面板避让与落位归窗口管理器；无显示器环境（无头测试）回落固定默认尺寸；内容区可滚动，高字体缩放下不依赖固定像素高度；比例、上下限与无头回落的具体数值属实现细节，不进 spec | §4.11、§8、§9 | §4.11 出现 `compute_default_size` 契约与「默认显示器」判据；窗口固定像素尺寸写法零命中（由 manifest 的 D25 像素级禁止规则覆盖） |
 | D32 | `TransportError::PermissionDenied` 的呈现码独立为 `PermissionDenied`：§5 错误模型已声明其消费方为「UI 提示设备节点权限与设备归属」，原 §4.12 表把它并入 `TransportFailure` 的通用文案，权限错误的可操作指引被稀释；独立呈现码后原因/建议文案直达修复动作（加入 disk 用户组或配置 udev 规则后重试）；原表行原地合并，不留旧映射 | §4.12、§5、§9 | §4.12 呈现码表出现 `PermissionDenied` 行且 `TransportFailure` 行不再覆盖权限错误 |
+| D33 | 权限修复成为软件能力且零持久化：设备节点不可读写时，引导向导提供「修复设备权限」动作（启动引导链自动发起一次，向导内可显式重试）；经 polkit 授权以 argv 直传的 `pkexec setfacl -m u:<user>:rw <nodes…>` 即时授予当前登录用户读写——不写规则文件、不改属主与用户组、不动节点 mode、不落任何系统配置，重插/重启/重枚举后自然失效（工具定位为即时使用，无持久化诉求）。`user`/`nodes` 字符白名单校验，不经 shell，无注入面。真机实验（2026-09-21，NixOS）：授予与撤销双向验证通过。环境状态机扩展 `Fixing` 态与 `FixPermissions*` 事件与 `AutoAttempts` 一次性纪律，与装载互斥并发（单飞）。注：NixOS 的 `/etc/udev/rules.d` 指向只读 nix store，规则安装路线在该平台不可行（调查结论，不进实现） | §4.11、§4.13、§5、§6、§7、§8、§9、§10 | §4.13 出现 `permission_fix_commands` 契约、`AutoAttempts` 纪律与零持久化条款；AC-016 覆盖修复失败呈现；锚点 `test_permission_fix_command_whitelist` |
 
 ## 10. 验证
 
@@ -1114,6 +1109,7 @@ pub fn next_environment_state(
 | `test_device_gone_during_reenumeration` | `crates/magi-transport` | 重枚举期间设备节点消失的容忍 |
 | `test_locked_device_actions_disabled` | `crates/magi-app` | 设备态驱动的入口启用与禁用 |
 | `test_unknown_pid_is_rejected` | `crates/magi-app` | 非目标 PID 被拒绝且不下发命令 |
+| `test_permission_fix_command_whitelist` | `crates/magi-app` | 权限修复命令固定形态：argv 直传 `pkexec setfacl`、user/nodes 白名单校验（D33） |
 | `test_empty_password_rejected` | `crates/magi-app` | 空口令被拒绝且不构造报文 |
 | `test_duplicate_trigger_is_busy` | `crates/magi-app` | 单飞约束下的忙错误 |
 | `test_password_zeroized_after_submit` | `crates/magi-app` | 提交后口令缓冲被 zeroize |
@@ -1127,7 +1123,7 @@ pub fn next_environment_state(
 | `test_environment_report_missing_module` | `crates/magi-app` | 环境自检报告 `sg` 模块缺失（D30） |
 | `test_environment_report_permission_denied` | `crates/magi-app` | 环境自检报告设备节点权限不足（D30） |
 | `test_environment_state_transitions` | `crates/magi-app` | 环境就绪状态机：检查/装载/失败/重检转换（D30） |
-| `test_window_size_scales_with_workarea` | `crates/magi-app` | 窗口默认尺寸随工作区推导、含上下限（D31） |
+| `test_window_size_scales_with_workarea` | `crates/magi-app` | 窗口默认尺寸随显示器几何推导、含上下限与无头回落（D31） |
 | `test_environment_pill_present` | `crates/magi-app` | HeaderBar 环境胶囊存在、警示样式、就绪时隐藏（D30） |
 
 兼容/迁移屏障表（条件 / 满足标准 / 验收证据）：
@@ -1136,5 +1132,6 @@ pub fn next_environment_state(
 |---|---|---|---|
 | 协议层黄金向量 | `crates/magi-protocol` 存在 | 帧构造与解析测试全部通过，黄金向量与 §4 一致 | `python tools/barriers.py` 中协议层屏障 PASS |
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，非 Linux 平台 `open` 返回通道不可用 | 同上，传输层屏障 PASS |
+| 应用层屏障 | `crates/magi-app` 存在 | `cargo test -p magi-app` 通过（含 UI 冒烟与环境状态机） | 同上，应用层屏障 PASS |
 
-**当前状态（Authoritative）**：D30（环境就绪引导）与 D31（窗口尺寸自适应）已落地：§4.13 新增环境就绪引导需求（`inspect_environment`/`EnvironmentState` 契约与转换表），§4.11 增补环境胶囊与引导向导、`compute_default_size` 工作区推导判据；新增测试锚点 5 个（环境自检 ×2、状态机、胶囊、窗口尺寸）。2026-09-15 于 nix devShell 内实跑：`cargo test --workspace` 全绿（magi-app 49、magi-protocol 57、magi-transport 25）；`python3 tools/test_audit_spec.py` 17 例全部通过；`python3 tools/audit_spec.py` PASS 且零 warning；`python3 tools/barriers.py` 三条屏障全绿、退出码 0。真机验证（D30）：无 `sg` 模块的机器上启动 → 自动发起 `pkexec modprobe sg`（polkit 授权）→ 装载成功 → 复检就绪；真机验证（扫描修复）：`idVendor/idProduct` 自 scsi_device 祖先目录解析后，`04e8:61fc` 锁定态设备被识别。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码，spec 与代码同批提交。
+**当前状态（Draft：D33 变更中）**：D30（环境就绪引导）、D31（窗口尺寸自适应）、D32（PermissionDenied 独立呈现码）已随代码落地（提交 `68c943f`）；本轮 D33（权限修复改 `setfacl` 即时 ACL、零持久化）与双审计修订（spec 缺陷 P0×1/P1×5/P2×8 + UI/Rust 组织审计）已入正文与 manifest，代码侧 D1–D7 修订待落地，`spec_status=draft`，审计对新契约/锚点的缺失降级为 warning 不阻断。代码落地、`cargo test --workspace` 全绿、真机验证（产品路径修复→授权→ACL 生效→胶囊消失）通过后，头部与本段统一切回 Authoritative 并与代码同批提交。上一基线（2026-09-15）：三 crate 测试 49+57+25、三件套全绿（详见 git 历史）。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码。
