@@ -299,6 +299,8 @@ pub struct ScanOutcome {
     pub hits: Vec<ScanHit>,
     /// 扫描失败（呈现段裁决是否打扰用户：权威轮次呈现，周期轮次只记诊断）。
     pub error: Option<AppError>,
+    /// 同轮环境自检报告（§4.13：取数轮附带环境自检，主线程只做迁移与呈现）。
+    pub env: crate::device::environment::EnvironmentReport,
 }
 
 /// 取数段：扫描本机设备并裁剪到受理上限（§4.1/§6；诊断环线程安全，工作线程可记录）。
@@ -310,17 +312,24 @@ pub fn fetch_scan() -> ScanOutcome {
                 // §6：同时受理设备上限 8 个，超出部分不呈现并给出提示。
                 crate::diagnostics::ring().record(crate::diagnostics::Level::Warn, key);
             }
-            ScanOutcome { hits, error: None }
+            ScanOutcome {
+                hits,
+                error: None,
+                env: crate::device::environment::inspect_environment(),
+            }
         }
         Err(error) => ScanOutcome {
             hits: Vec::new(),
             error: Some(error),
+            env: crate::device::environment::inspect_environment(),
         },
     }
 }
 
-/// 启动周期设备监控线程（§4.1 REQ-001 热插拔感知）：每 [`RESCAN_INTERVAL`] 取数一轮，
-/// 把结果经 `sender` 投回主线程呈现；接收端关闭（主循环退出）后线程自行结束。
+/// 启动周期设备监控线程（§4.1 REQ-001 热插拔感知）：先取数后休眠——首轮立即取数投递
+/// （启动扫描与环境自检由此异步送达，主线程启动路径不再同步扫描），此后每
+/// [`RESCAN_INTERVAL`] 一轮；结果经 `sender` 投回主线程呈现；接收端关闭（主循环退出）
+/// 后线程自行结束。
 ///
 /// 线程创建失败返回 `AppError::Transport(Platform)`（§5，与 [`run_device_job`] 同口径），
 /// 不启动监控。
@@ -328,11 +337,11 @@ pub fn spawn_scan_watch(sender: async_channel::Sender<ScanOutcome>) -> Result<()
     let spawned = thread::Builder::new()
         .name(String::from("t7-device-watch"))
         .spawn(move || loop {
-            thread::sleep(RESCAN_INTERVAL);
             // 接收端已随主循环退出 → 结束监控线程（句柄即弃，线程自行收尾）。
             if sender.send_blocking(fetch_scan()).is_err() {
                 break;
             }
+            thread::sleep(RESCAN_INTERVAL);
         });
     spawned.map(drop).map_err(|err| {
         AppError::Transport(TransportError::Platform {

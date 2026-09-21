@@ -34,7 +34,7 @@ use magi_protocol::UnlockStep;
 use rust_i18n::t;
 
 use crate::diagnostics::{self, Level};
-use crate::device::environment::{self, EnvironmentEvent, EnvironmentState};
+use crate::device::environment::{EnvironmentEvent, EnvironmentState};
 use crate::device::gate::{ActionId, UnlockGate};
 use crate::device::jobs::{self, CancelFlag, DeviceJob, ScanHit};
 use crate::device::rescan::{DeviceIdentity, RescanAction, RescanState};
@@ -446,11 +446,10 @@ impl MainWindow {
         });
     }
 
-    /// 启动装配（§4.13）：接线入口、扫描设备并启动周期重扫监控。
+    /// 启动装配（§4.13）：接线入口并启动周期重扫监控；首轮扫描与环境自检由监控线程
+    /// 立即异步送达（先取数后休眠），启动路径不再同步扫描（§6：不阻塞首帧）。
     pub fn start(&self) {
         self.connect_actions();
-        self.start_environment_bootstrap();
-        self.refresh_devices();
         self.refresh_actions();
         self.spawn_device_watch();
     }
@@ -580,17 +579,19 @@ impl MainWindow {
         ));
     }
 
-    /// 权威轮次的设备刷新（§4.1：Linux sysfs 扫描）。
+    /// 会话收尾的权威轮次设备刷新（§4.1：Linux sysfs 扫描；§3.3：会话收尾后必须重新
+    /// 读取设备态再裁决呈现）。
     ///
-    /// 同步取数并强制呈现（启动与会话收尾 §3.3：会话收尾后必须重新读取设备态再裁决
-    /// 呈现）；扫描阶段的失败只记诊断（呈现码进诊断导出）——设备分组空态与侧边栏平台
-    /// 说明已给出路，结果区留给用户触发的作业呈现（与周期轮次同口径）。
+    /// 同步取数并强制呈现，同轮投递环境自检（与监控轮次同口径）；扫描阶段的失败只记
+    /// 诊断（呈现码进诊断导出）——设备分组空态与侧边栏平台说明已给出路，结果区留给
+    /// 用户触发的作业呈现（与周期轮次同口径）。
     fn refresh_devices(&self) {
         self.show_platform_notice();
         let outcome = jobs::fetch_scan();
         if let Some(error) = &outcome.error {
             diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
         }
+        self.apply_environment_event(EnvironmentEvent::CheckDone(outcome.env.clone()));
         self.apply_scan(&outcome, true);
     }
 
@@ -625,23 +626,28 @@ impl MainWindow {
         }
     }
 
-    /// 设备热插拔监控装配（§4.1 REQ-001）：工作线程周期重扫，结果经 `async_channel`
-    /// 回主线程 `MainContext` 消费（与作业事件同一通道形态）；GTK 侧只做装配。
+    /// 设备热插拔监控装配（§4.1 REQ-001）：工作线程周期重扫（首轮立即），结果经
+    /// `async_channel` 回主线程 `MainContext` 消费（与作业事件同一通道形态）；GTK 侧
+    /// 只做装配。首轮为权威轮（启动扫描与环境自检由此异步送达），此后为周期轮；每轮
+    /// 先投递同轮环境自检，再裁决设备呈现。
     fn spawn_device_watch(&self) {
         let (sender, receiver) = async_channel::unbounded::<jobs::ScanOutcome>();
         if let Err(error) = jobs::spawn_scan_watch(sender) {
-            // 监控线程创建失败与扫描失败同口径呈现（§5）；启动扫描仍已完成。
+            // 监控线程创建失败与扫描失败同口径呈现（§5）；此时无重扫来源，仅呈现错误。
             self.show_error(&error);
             return;
         }
         let this = self.clone();
+        let mut first = true;
         glib::MainContext::default().spawn_local(async move {
             while let Ok(outcome) = receiver.recv().await {
                 if let Some(error) = &outcome.error {
                     // 周期轮次的扫描失败不进结果区（结果区属于作业呈现），只记诊断。
                     diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
                 }
-                this.apply_scan(&outcome, false);
+                this.apply_environment_event(EnvironmentEvent::CheckDone(outcome.env.clone()));
+                this.apply_scan(&outcome, first);
+                first = false;
             }
         });
     }
@@ -699,12 +705,6 @@ impl MainWindow {
         let settings = crate::settings::Settings::load();
         let dialog = crate::ui::settings_dialog::SettingsDialog::new(self, settings);
         dialog.present(Some(self));
-    }
-
-    /// 环境就绪引导装配（§4.13）：启动自检 → 状态机裁决 → 胶囊/装载动作。
-    fn start_environment_bootstrap(&self) {
-        let report = environment::inspect_environment();
-        self.apply_environment_event(EnvironmentEvent::CheckDone(report));
     }
 
     /// 入口行（按 `ActionId` 取操作分组的 `AdwButtonRow`）。
