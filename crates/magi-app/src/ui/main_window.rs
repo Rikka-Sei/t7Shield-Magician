@@ -446,10 +446,8 @@ impl MainWindow {
         });
     }
 
-    /// 启动装配（§4.13）：注册事件汇、接线入口、扫描设备并启动周期重扫监控。
+    /// 启动装配（§4.13）：接线入口、扫描设备并启动周期重扫监控。
     pub fn start(&self) {
-        let this = self.clone();
-        jobs::set_event_sink(move |event| this.on_event(event));
         self.connect_actions();
         self.start_environment_bootstrap();
         self.refresh_devices();
@@ -763,13 +761,24 @@ impl MainWindow {
             job.action = Some(action);
         }
         diagnostics::ring().record(Level::Info, action.label_key());
-        let spawned = jobs::spawn_device_job(job.device.clone(), move |emit| match action {
+        match jobs::spawn_device_job(job.device.clone(), move |emit| match action {
             ActionId::Unlock => jobs::unlock_device(&job, password, &cancel, emit),
             _ => jobs::validate_password(&job, password, emit),
-        });
-        if let Err(error) = spawned {
-            // §4.13：同设备已有在飞操作 → `Busy`（命令队列上限 1，不排队）。
-            self.show_error(&error);
+        }) {
+            Ok(receiver) => {
+                // 事件消费窗口自持：闭包持有发起作业的窗口克隆，事件直达该窗口；
+                // 不经过全局事件汇，多次装配主窗口也不会把事件路由到旧窗口闭包。
+                let this = self.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    while let Ok(event) = receiver.recv().await {
+                        this.on_event(event);
+                    }
+                });
+            }
+            Err(error) => {
+                // §4.13：同设备已有在飞操作 → `Busy`（命令队列上限 1，不排队）。
+                self.show_error(&error);
+            }
         }
         self.refresh_actions();
     }

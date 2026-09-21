@@ -3,11 +3,9 @@
 //! - 协议 I/O 一律在工作线程执行，UI 主线程只做事件消费（§6：主线程单帧阻塞 ≤ 100 ms）；
 //! - 同设备同时最多 1 个在飞作业（复用 [`JobRegistry`]；命令队列上限 1，
 //!   溢出即拒绝，不排队）；
-//! - 事件经 `async_channel` 回到主线程的 `glib::MainContext`，再由主窗口注册的事件汇消费。
-//!
-//! 事件汇是线程局部的：它捕获的是 glib 控件（`Send` 不成立），只允许在主线程注册与调用。
+//! - 事件经 `async_channel` 交还调用窗口：[`spawn_device_job`] 返回事件通道，由调用
+//!   窗口在自己的 `glib::MainContext` 消费循环里直连消费（窗口自持，无全局事件汇）。
 
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +14,6 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_channel::Receiver;
-use gtk4::glib;
 use magi_protocol::{
     run_unlock, run_validate_password, DeviceState, Discovery, Password, ProgressReporter,
     RunError, UnlockEvidence, UnlockStep, VENDOR_ID,
@@ -178,38 +175,9 @@ pub fn any_job_in_flight() -> bool {
     REGISTRY.in_flight() > 0
 }
 
-/// 主线程事件汇的条目类型（`Fn` 闭包持有 glib 控件，不要求 `Send`）。
-type EventSink = Box<dyn Fn(AppEvent)>;
-
-thread_local! {
-    /// 主线程事件汇（由主窗口在启动时注册一次）。
-    static EVENT_SINK: RefCell<Option<EventSink>> = const { RefCell::new(None) };
-}
-
-/// 注册主线程事件汇；只允许注册一次，重复注册不覆盖并返回 `false`。
-pub fn set_event_sink(sink: impl Fn(AppEvent) + 'static) -> bool {
-    EVENT_SINK.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if slot.is_some() {
-            return false;
-        }
-        *slot = Some(Box::new(sink));
-        true
-    })
-}
-
-/// 把事件交给主线程事件汇；未注册时没有消费端，直接丢弃（不改变协议行为）。
-fn deliver(event: AppEvent) {
-    EVENT_SINK.with(|cell| {
-        if let Some(sink) = cell.borrow().as_ref() {
-            sink(event);
-        }
-    });
-}
-
 /// 在工作线程执行 `job`：`job` 用给定的发射器上报 [`AppEvent`]，返回值为收尾证据。
 ///
-/// 返回事件通道与工作线程句柄；调用方负责消费通道（[`spawn_device_job`] 走主线程消费）。
+/// 返回事件通道与工作线程句柄；调用方负责消费通道（[`spawn_device_job`] 把通道交还调用窗口）。
 /// 同设备已有在飞作业 → `AppError::Busy`（§4.13），且不启动线程、不下发任何命令。
 pub fn run_device_job<F>(
     dev: DeviceId,
@@ -245,20 +213,14 @@ where
     }
 }
 
-/// §4.13：在工作线程执行 `job`，把 `AppEvent` 投递回主线程（事件汇见 [`set_event_sink`]）。
+/// §4.13：在工作线程执行 `job`，返回事件通道供调用方在主线程消费。
 ///
 /// 同设备最多一个在飞任务；已有在飞任务时返回 `AppError::Busy`。
-pub fn spawn_device_job<F>(dev: DeviceId, job: F) -> Result<(), AppError>
+pub fn spawn_device_job<F>(dev: DeviceId, job: F) -> Result<Receiver<AppEvent>, AppError>
 where
     F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> + Send + 'static,
 {
-    let (receiver, _handle) = run_device_job(dev, job)?;
-    glib::MainContext::default().spawn_local(async move {
-        while let Ok(event) = receiver.recv().await {
-            deliver(event);
-        }
-    });
-    Ok(())
+    Ok(run_device_job(dev, job)?.0)
 }
 
 /// 平台命令通道（D27：仅 Linux）：`SG_IO`；非 Linux 平台上 `open` 返回 `Unavailable`。
