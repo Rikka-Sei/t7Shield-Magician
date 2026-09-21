@@ -15,19 +15,19 @@ impl MainWindow {
     /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（一次性纪律由状态机与 env_autos 保证）。
     pub(crate) fn apply_environment_event(&self, event: EnvironmentEvent) {
         let action = {
-            let mut state = self.state().borrow_mut();
-            let (_next, action) =
-                next_environment_state(state.environment.clone(), event, &mut state.env_autos);
-            state.environment = _next;
+            let mut env = self.imp().env.borrow_mut();
+            let (next, action) =
+                next_environment_state(env.state.clone(), event, &mut env.autos);
+            env.state = next;
             action
         };
         match action {
             environment::EnvironmentAction::None => {}
             environment::EnvironmentAction::ShowPill => {
-                self.imp().environment_pill.set_visible(true)
+                self.imp().header.environment_pill.set_visible(true)
             }
             environment::EnvironmentAction::HidePill => {
-                self.imp().environment_pill.set_visible(false)
+                self.imp().header.environment_pill.set_visible(false)
             }
             environment::EnvironmentAction::LoadModule => self.spawn_module_load(),
             environment::EnvironmentAction::FixPermissions => self.spawn_permission_fix(),
@@ -66,8 +66,8 @@ impl MainWindow {
     /// 权限修复（§4.13，D33）：argv 直传 pkexec setfacl；前置不满足不发起、直接手动指引。
     pub(crate) fn spawn_permission_fix(&self) {
         let nodes: Vec<String> = {
-            let state = self.state().borrow();
-            match &state.environment {
+            let env = self.imp().env.borrow();
+            match &env.state {
                 EnvironmentState::Issue(issues)
                 | EnvironmentState::LoadFailed(issues)
                 | EnvironmentState::Fixing(issues) => issues
@@ -113,8 +113,8 @@ impl MainWindow {
 
     /// 当前问题清单与装载在飞标记的呈现快照。
     pub(crate) fn environment_snapshot(&self) -> (Vec<environment::EnvironmentIssue>, bool) {
-        let state = self.state().borrow();
-        match &state.environment {
+        let env = self.imp().env.borrow();
+        match &env.state {
             EnvironmentState::Issue(issues) | EnvironmentState::LoadFailed(issues) => {
                 (issues.clone(), false)
             }
@@ -129,16 +129,17 @@ impl MainWindow {
     pub(crate) fn present_environment_dialog(&self) {
         let (issues, loading) = self.environment_snapshot();
         let dialog = EnvironmentDialog::new(self, &issues, loading);
-        self.state().borrow_mut().open_environment_dialog = Some(dialog.downgrade());
+        self.imp().dialogs.borrow_mut().environment = Some(dialog.downgrade());
         dialog.present(Some(self));
     }
 
     /// 向导打开期间的状态迁移刷新（§4.13）。
     pub(crate) fn refresh_environment_dialog(&self) {
         let dialog = self
-            .state()
+            .imp()
+            .dialogs
             .borrow()
-            .open_environment_dialog
+            .environment
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = dialog {

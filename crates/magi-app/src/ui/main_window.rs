@@ -173,26 +173,50 @@ fn current_workarea() -> Option<(i32, i32)> {
     Some((geometry.width(), geometry.height()))
 }
 
+/// 作业编排域：单飞闸门、在飞设备/动作与取消标志（不变量：device 与 action 同生命周期）。
 #[derive(Debug, Default)]
-pub(crate) struct WindowState {
+pub(crate) struct JobState {
     pub(crate) gate: UnlockGate,
     pub(crate) device: Option<DeviceJob>,
     pub(crate) cancel: CancelFlag,
     pub(crate) action: Option<ActionId>,
-    /// 周期重扫状态机：呈现中身份、在位缓存与空态防抖计数。
-    pub(crate) rescan: RescanState,
-    /// 结果区重放缓存（语言切换后按新语言重放）。
+}
+
+/// i18n 重放域：语言切换后按新语言重放的动态呈现缓存（结果区与设备分组）。
+#[derive(Debug, Default)]
+pub(crate) struct ReplayState {
     pub(crate) last_outcome: Option<StoredOutcome>,
-    /// 最后一次设备扫描命中（relocalize 重放设备分组文案用；空态清除）。
+    /// 最后一次设备扫描命中（空态清除，与设备分组呈现同步）。
     pub(crate) last_hit: Option<ScanHit>,
-    /// 打开中的口令对话框（语言切换时同步重渲染）。
-    pub(crate) open_dialog: Option<glib::WeakRef<PasswordDialog>>,
-    /// 打开中的引导向导（环境状态迁移时刷新问题清单）。
-    pub(crate) open_environment_dialog: Option<glib::WeakRef<EnvironmentDialog>>,
-    /// 环境就绪状态机当前态（§4.13）。
-    pub(crate) environment: EnvironmentState,
-    /// 启动引导链一次性自动动作（D33）：装载/修复各至多一次，收口进状态机。
-    pub(crate) env_autos: crate::device::environment::AutoAttempts,
+}
+
+/// 对话框域：打开中的对话框弱引用（语言切换与环境迁移联动刷新，不阻止回收）。
+#[derive(Default)]
+pub(crate) struct DialogRefs {
+    pub(crate) password: Option<glib::WeakRef<PasswordDialog>>,
+    pub(crate) environment: Option<glib::WeakRef<EnvironmentDialog>>,
+}
+
+/// 环境域：状态机当前态与启动引导链一次性标志（§4.13/D33，environment_flow 消费）。
+#[derive(Default)]
+pub(crate) struct EnvState {
+    pub(crate) state: EnvironmentState,
+    pub(crate) autos: crate::device::environment::AutoAttempts,
+}
+
+/// 外壳控件集：顶栏（窗口单元自有，非页面；D29 分文件组织）。
+pub(crate) struct HeaderBarWidgets {
+    pub(crate) sidebar_toggle: gtk::ToggleButton,
+    pub(crate) action_preferences: gtk::Button,
+    pub(crate) environment_pill: gtk::Button,
+    pub(crate) window_title: adw::WindowTitle,
+}
+
+/// 外壳控件集：侧边栏品牌与导航。
+pub(crate) struct SidebarWidgets {
+    pub(crate) title: gtk::Label,
+    pub(crate) list: gtk::ListBox,
+    pub(crate) labels: Vec<gtk::Label>,
 }
 
 mod imp {
@@ -201,19 +225,18 @@ mod imp {
     /// 主窗口子件（D29）：全部在 Rust 侧构建，无 `.ui` 模板、无 `#[template_child]`。
     pub struct MainWindow {
         pub root: adw::ToolbarView,
-        pub sidebar_toggle: gtk::ToggleButton,
-        pub action_preferences: gtk::Button,
-        pub environment_pill: gtk::Button,
-        pub window_title: adw::WindowTitle,
-        pub sidebar_title: gtk::Label,
+        pub(crate) header: HeaderBarWidgets,
+        pub(crate) sidebar: SidebarWidgets,
         pub split_view: adw::OverlaySplitView,
-        pub nav_list: gtk::ListBox,
-        pub nav_labels: Vec<gtk::Label>,
         pub content_stack: gtk::Stack,
         pub(crate) dashboard: dashboard::DashboardWidgets,
         pub(crate) diagnostics: diagnostics_page::DiagnosticsWidgets,
         pub(crate) about: about_page::AboutWidgets,
-        pub(crate) state: RefCell<WindowState>,
+        pub(crate) rescan: RefCell<RescanState>,
+        pub(crate) job: RefCell<JobState>,
+        pub(crate) replay: RefCell<ReplayState>,
+        pub(crate) dialogs: RefCell<DialogRefs>,
+        pub(crate) env: RefCell<EnvState>,
     }
 
     impl Default for MainWindow {
@@ -325,19 +348,27 @@ mod imp {
 
             Self {
                 root,
-                sidebar_toggle,
-                action_preferences,
-                environment_pill,
-                window_title,
-                sidebar_title,
+                header: HeaderBarWidgets {
+                    sidebar_toggle,
+                    action_preferences,
+                    environment_pill,
+                    window_title,
+                },
+                sidebar: SidebarWidgets {
+                    title: sidebar_title,
+                    list: nav_list,
+                    labels: nav_labels,
+                },
                 split_view,
-                nav_list,
-                nav_labels,
                 content_stack,
                 dashboard,
                 diagnostics,
                 about,
-                state: RefCell::new(WindowState::default()),
+                rescan: RefCell::new(RescanState::default()),
+                job: RefCell::new(JobState::default()),
+                replay: RefCell::new(ReplayState::default()),
+                dialogs: RefCell::new(DialogRefs::default()),
+                env: RefCell::new(EnvState::default()),
             }
         }
     }
@@ -429,17 +460,17 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_label(&t!("app.title"));
-        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
+        imp.sidebar.title.set_label(&t!("app.title"));
+        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
+        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
         imp.content_stack
             .set_visible_child_name(NavItem::Dashboard.page_name());
         // 初始选中第一项：选中态由 GtkListBox 原生机制维护（此时导航回调尚未接线，
         // 不会重入 show_page；页面可见性已由上一行直接设置）。
-        if let Some(row) = imp.nav_list.row_at_index(0) {
-            imp.nav_list.select_row(Some(&row));
+        if let Some(row) = imp.sidebar.list.row_at_index(0) {
+            imp.sidebar.list.select_row(Some(&row));
         }
         imp.dashboard.device_group.set_title(&t!("device.group_title"));
         imp.dashboard.actions_group.set_title(&t!("dashboard.actions_title"));
@@ -476,19 +507,19 @@ impl MainWindow {
         imp.diagnostics.action_export_diagnostics
             .set_title(&t!("action.export_diagnostics"));
         imp.dashboard.action_cancel.set_label(&t!("action.cancel"));
-        imp.action_preferences
+        imp.header.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
-        imp.environment_pill
+        imp.header.environment_pill
             .set_label(&t!("environment.pill_label"));
-        imp.environment_pill
+        imp.header.environment_pill
             .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
-        imp.sidebar_toggle
+        imp.header.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
         // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
         // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
         // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
         imp.split_view
-            .bind_property("show-sidebar", &imp.sidebar_toggle, "active")
+            .bind_property("show-sidebar", &imp.header.sidebar_toggle, "active")
             .bidirectional()
             .sync_create()
             .build();
@@ -524,19 +555,19 @@ impl MainWindow {
             move |_| this.export_diagnostics()
         ));
         let this = self.clone();
-        imp.action_preferences.connect_clicked(glib::clone!(
+        imp.header.action_preferences.connect_clicked(glib::clone!(
             #[weak]
             this,
             move |_| this.present_preferences()
         ));
         let this = self.clone();
-        imp.environment_pill.connect_clicked(glib::clone!(
+        imp.header.environment_pill.connect_clicked(glib::clone!(
             #[weak]
             this,
             move |_| this.present_environment_dialog()
         ));
         let this = self.clone();
-        imp.nav_list.connect_row_selected(glib::clone!(
+        imp.sidebar.list.connect_row_selected(glib::clone!(
             #[weak]
             this,
             move |_, row| {
@@ -573,9 +604,9 @@ impl MainWindow {
         let in_flight = !authoritative && jobs::any_job_in_flight();
         let identity = outcome.hits.first().map(|hit| hit.job.identity);
         let action = {
-            let mut state = self.state().borrow_mut();
-            let (next, action) = state.rescan.observe(identity, in_flight);
-            state.rescan = next;
+            let mut rescan = self.imp().rescan.borrow_mut();
+            let (next, action) = rescan.observe(identity, in_flight);
+            *rescan = next;
             action
         };
         match action {
@@ -584,12 +615,12 @@ impl MainWindow {
                 let Some(hit) = outcome.hits.first() else {
                     return;
                 };
-                self.state().borrow_mut().device = Some(hit.job.clone());
+                self.imp().job.borrow_mut().device = Some(hit.job.clone());
                 self.show_hit(hit);
                 self.refresh_actions();
             }
             RescanAction::ShowEmpty => {
-                self.state().borrow_mut().device = None;
+                self.imp().job.borrow_mut().device = None;
                 self.show_unknown_device();
                 self.refresh_actions();
             }
@@ -630,39 +661,33 @@ impl MainWindow {
         }
     }
 
+
     /// 按当前状态刷新入口（设备态与重试预算的两个来源在此汇合）。
     fn refresh_actions(&self) {
         let (identity, gate) = {
-            let state = self.state().borrow();
+            let job = self.imp().job.borrow();
             (
-                state
-                    .device
+                job.device
                     .as_ref()
-                    .map(|job| job.identity)
+                    .map(|device| device.identity)
                     .unwrap_or(DeviceIdentity::Unrecognized),
-                state.gate,
+                job.gate,
             )
         };
         self.apply_actions(identity, &gate);
-    }
-
-    /// 窗口运行期状态（设备、闸门、取消标志与在飞动作）。
-    pub(crate) fn state(&self) -> &RefCell<WindowState> {
-        &self.imp().state
     }
 
     /// 切换页面并同步导航选中态（选中唯一性由 `GtkListBox` 原生选中机制保证）。
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
-        imp.window_title.set_title(&t!(item.label_key()));
         let index = NavItem::ALL
             .iter()
             .position(|candidate| *candidate == item)
             .expect("NavItem 必须在 ALL 中") as i32;
-        if let Some(row) = imp.nav_list.row_at_index(index) {
+        if let Some(row) = imp.sidebar.list.row_at_index(index) {
             if !row.is_selected() {
-                imp.nav_list.select_row(Some(&row));
+                imp.sidebar.list.select_row(Some(&row));
             }
         }
         if item == NavItem::Diagnostics {
@@ -716,51 +741,26 @@ impl MainWindow {
     /// 口令对话框 → 提交后启动作业（§4.12：提交即清零、对话框关闭并清除输入）。
     fn prompt_password(&self, action: ActionId) {
         // §6：重新打开对话框 → 本会话的口令重试预算复位。
-        self.state().borrow_mut().gate.open_dialog();
+        self.imp().job.borrow_mut().gate.open_dialog();
         let dialog = PasswordDialog::new(action);
-
         // relocalize 联动缓存：语言切换时同步重渲染打开中的对话框（弱引用，不阻止回收）。
-        self.state().borrow_mut().open_dialog = Some(dialog.downgrade());
+        self.imp().dialogs.borrow_mut().password = Some(dialog.downgrade());
         let this = self.clone();
-        dialog.submit_button().connect_clicked(glib::clone!(
-            #[weak]
-            this,
-            #[weak]
-            dialog,
-            move |_| {
-                let password = match dialog.take_password() {
-                    Ok(password) => password,
-                    Err(error) => {
-                        // §4.12：空口令就地提示、对话框保持打开、不构造任何报文。
-                        dialog.show_error(&error);
-                        return;
-                    }
-                };
-                dialog.close();
-                this.start_job(action, password);
-            }
-        ));
-        dialog.cancel_button().connect_clicked(glib::clone!(
-            #[weak]
-            dialog,
-            move |_| {
-                dialog.close();
-            }
-        ));
+        dialog.connect_submit(move |password| this.start_job(action, password));
         dialog.present(Some(self));
     }
 
     /// 启动一次设备作业（§4.13：工作线程执行、事件回主线程；同设备单飞）。
     fn start_job(&self, action: ActionId, password: Password) {
-        let Some(job) = self.state().borrow().device.clone() else {
+        let Some(job) = self.imp().job.borrow().device.clone() else {
             self.show_result(DeviceIdentity::Unrecognized.status_key());
             return;
         };
         let cancel = CancelFlag::new();
         {
-            let mut state = self.state().borrow_mut();
-            state.cancel = cancel.clone();
-            state.action = Some(action);
+            let mut job = self.imp().job.borrow_mut();
+            job.cancel = cancel.clone();
+            job.action = Some(action);
         }
         diagnostics::ring().record(Level::Info, action.label_key());
         let spawned = jobs::spawn_device_job(job.device.clone(), move |emit| match action {
@@ -776,7 +776,7 @@ impl MainWindow {
 
     /// 取消当前作业（§6：只停止后续步骤，不阻塞退出）。
     fn cancel_current(&self) {
-        let cancel = self.state().borrow().cancel.clone();
+        let cancel = self.imp().job.borrow().cancel.clone();
         cancel.cancel();
     }
 
@@ -792,10 +792,8 @@ impl MainWindow {
     /// 收尾：按解锁判据分级呈现；取消优先于判据（§6）。
     fn finish(&self, evidence: Option<UnlockEvidence>) {
         let (action, cancelled) = {
-            let state = self.state().borrow();
-            let action = state.action;
-            let cancelled = state.cancel.cancelled();
-            (action, cancelled)
+            let job = self.imp().job.borrow();
+            (job.action, job.cancel.cancelled())
         };
         if cancelled {
             diagnostics::ring().record(Level::Info, "result.cancelled");
@@ -816,7 +814,7 @@ impl MainWindow {
                 self.show_result(key);
             } else {
                 // relocalize 重放缓存：挂载点参数不走固定结果键，单独缓存。
-                self.state().borrow_mut().last_outcome =
+                self.imp().replay.borrow_mut().last_outcome =
                     Some(StoredOutcome::Mounted(mounted.clone()));
                 let text = format!(
                     "{} {}",
@@ -833,7 +831,7 @@ impl MainWindow {
     /// 失败：记录口令被拒次数（§6：最多 3 次）并按呈现码呈现。
     fn fail(&self, error: AppError) {
         if error == AppError::PasswordRejected {
-            self.state().borrow_mut().gate.record_rejection();
+            self.imp().job.borrow_mut().gate.record_rejection();
         }
         self.show_error(&error);
         self.refresh_actions();
@@ -876,9 +874,9 @@ impl MainWindow {
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_label(&t!("app.title"));
-        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
+        imp.sidebar.title.set_label(&t!("app.title"));
+        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
+        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
             label.set_label(&t!(item.label_key()));
         }
         imp.dashboard.device_group.set_title(&t!("device.group_title"));
@@ -914,17 +912,17 @@ impl MainWindow {
         imp.diagnostics.action_export_diagnostics
             .set_title(&t!("action.export_diagnostics"));
         imp.dashboard.action_cancel.set_label(&t!("action.cancel"));
-        imp.action_preferences
+        imp.header.action_preferences
             .set_tooltip_text(Some(&t!("action.preferences")));
-        imp.environment_pill
+        imp.header.environment_pill
             .set_label(&t!("environment.pill_label"));
-        imp.environment_pill
+        imp.header.environment_pill
             .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
-        imp.sidebar_toggle
+        imp.header.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
         // 设备分组重放：有缓存命中按新语言重渲染（不走 refresh_devices——
         // RescanState 身份不变时返回 Keep，不会重刷文案）。
-        let last_hit = self.state().borrow().last_hit.clone();
+        let last_hit = self.imp().replay.borrow().last_hit.clone();
         match last_hit {
             Some(hit) => self.show_hit(&hit),
             None => self.show_unknown_device(),
@@ -932,7 +930,7 @@ impl MainWindow {
         self.show_platform_notice();
         self.refresh_actions();
         // 结果区重放。
-        let last_outcome = self.state().borrow().last_outcome.clone();
+        let last_outcome = self.imp().replay.borrow().last_outcome.clone();
         match last_outcome {
             Some(StoredOutcome::Result(key)) => self.show_result(key),
             Some(StoredOutcome::Mounted(volumes)) => {
@@ -953,18 +951,20 @@ impl MainWindow {
             self.refresh_diagnostics_view();
         }
         let dialog = self
-            .state()
+            .imp()
+            .dialogs
             .borrow()
-            .open_dialog
+            .password
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = dialog {
             dialog.relocalize();
         }
         let env_dialog = self
-            .state()
+            .imp()
+            .dialogs
             .borrow()
-            .open_environment_dialog
+            .environment
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = env_dialog {
@@ -1018,10 +1018,10 @@ mod tests {
         }
         let window = MainWindow::new();
         let imp = window.imp();
-        let row_count = nav_row_count(&imp.nav_list);
+        let row_count = nav_row_count(&imp.sidebar.list);
         assert!(row_count >= 3, "导航项至少 3 项，实际 {row_count}");
         assert!(
-            imp.nav_list.has_css_class("navigation-sidebar"),
+            imp.sidebar.list.has_css_class("navigation-sidebar"),
             "侧边栏导航必须用内置 navigation-sidebar 类"
         );
         for item in NavItem::ALL {
@@ -1034,7 +1034,7 @@ mod tests {
             );
         }
         let selected = (0..row_count)
-            .filter_map(|index| imp.nav_list.row_at_index(index))
+            .filter_map(|index| imp.sidebar.list.row_at_index(index))
             .filter(|row| row.is_selected())
             .count();
         assert_eq!(selected, 1, "任一时刻选中项必须恰 1 个");
@@ -1078,20 +1078,20 @@ mod tests {
         let imp = window.imp();
         // 警示色 = warning 调色（libadwaita 内置类）+ suggested-action 背景。
         assert!(
-            imp.environment_pill.has_css_class("warning"),
+            imp.header.environment_pill.has_css_class("warning"),
             "环境胶囊必须挂 warning 警示类"
         );
         assert!(
-            imp.environment_pill.has_css_class("suggested-action"),
+            imp.header.environment_pill.has_css_class("suggested-action"),
             "环境胶囊必须挂 suggested-action 背景类"
         );
         // 初始环境态 Unknown：胶囊不呈现（就绪口径同样隐藏）。
         assert!(
-            !imp.environment_pill.is_visible(),
+            !imp.header.environment_pill.is_visible(),
             "环境未发现问题时胶囊必须隐藏"
         );
         assert!(
-            imp.environment_pill
+            imp.header.environment_pill
                 .label()
                 .is_some_and(|label| !label.is_empty()),
             "胶囊文案必须经 i18n 键装配"

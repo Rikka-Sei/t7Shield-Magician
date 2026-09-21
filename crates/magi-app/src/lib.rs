@@ -49,7 +49,7 @@ pub fn run() -> gtk::glib::ExitCode {
     // 主题应用须在 GTK/libadwaita 初始化之后：`build()` 只构造应用对象，`adw_init` 发生在
     // 启动路径上。startup 信号（RUN_FIRST，默认处理器先跑 adw_init）早于任何窗口呈现，
     // 在此设置 AdwStyleManager，先于 activate 建窗、首帧即按所选主题渲染。
-    app.connect_startup(move |_| ui::apply_theme(&settings));
+    app.connect_startup(move |_| settings::apply_theme(&settings));
     ui::MainWindow::install(&app);
     app.run()
 }

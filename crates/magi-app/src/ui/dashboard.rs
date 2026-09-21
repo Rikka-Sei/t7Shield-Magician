@@ -163,7 +163,7 @@ impl MainWindow {
     pub(crate) fn show_hit(&self, hit: &ScanHit) {
         let imp = self.imp();
         // relocalize 重放缓存：语言切换后按新语言重放设备分组文案。
-        self.state().borrow_mut().last_hit = Some(hit.clone());
+        self.imp().replay.borrow_mut().last_hit = Some(hit.clone());
         imp.dashboard.device_row.set_title(&t!("device.model"));
         let ids = format!(
             "{} {:04x}:{:04x}",
@@ -201,7 +201,7 @@ impl MainWindow {
     pub(crate) fn show_unknown_device(&self) {
         let imp = self.imp();
         // 空态与设备分组互斥：清除重放缓存，relocalize 才会重放空态而不是陈旧设备行。
-        self.state().borrow_mut().last_hit = None;
+        self.imp().replay.borrow_mut().last_hit = None;
         imp.dashboard
             .device_row
             .set_title(&t!(DeviceIdentity::Unrecognized.status_key()));
@@ -321,14 +321,14 @@ impl MainWindow {
     /// 结果文案（§4.8 判据分级 / 取消 / 校验结论）。
     pub fn show_result(&self, message_key: &'static str) {
         // relocalize 重放缓存（success/neutral 均记；重放时重复写同一值，幂等无害）。
-        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Result(message_key));
+        self.imp().replay.borrow_mut().last_outcome = Some(StoredOutcome::Result(message_key));
         self.show_outcome(&t!(message_key), result_kind(message_key));
     }
 
     /// 错误呈现：呈现码 + 一句原因 + 一句建议（§4.13）。
     pub fn show_error(&self, error: &AppError) -> String {
         // relocalize 重放缓存（错误经呈现码/原因/建议键重放）。
-        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Error(error.clone()));
+        self.imp().replay.borrow_mut().last_outcome = Some(StoredOutcome::Error(error.clone()));
         let code = presentation::presentation_code(error);
         let text = format!(
             "{code}：{}；{}",

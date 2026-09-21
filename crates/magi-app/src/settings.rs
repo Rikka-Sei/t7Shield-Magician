@@ -222,3 +222,11 @@ mod tests {
         );
     }
 }
+
+/// 应用主题到全局样式管理器（D28；T4b 自 ui/mod 归位到设置域）。
+///
+/// 须在 GTK 初始化之后调用（`AdwApplication` 的 `startup` 阶段及以后），否则
+/// `StyleManager::default()` 会触发「Gtk has to be initialized」断言。
+pub fn apply_theme(settings: &Settings) {
+    libadwaita::StyleManager::default().set_color_scheme(settings.color_scheme());
+}

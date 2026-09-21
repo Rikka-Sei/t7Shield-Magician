@@ -192,7 +192,7 @@ impl SettingsDialog {
             }
             let mut settings = imp.settings.borrow_mut();
             settings.theme = theme_from_index(row.selected());
-            crate::ui::apply_theme(&settings);
+            crate::settings::apply_theme(&settings);
             settings.save();
         });
         let dialog = self.clone();
