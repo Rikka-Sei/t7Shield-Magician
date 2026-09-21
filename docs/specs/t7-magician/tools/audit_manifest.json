@@ -1,7 +1,7 @@
 {
   "_readme": "t7-magician 权威规格审计清单。本文件是规范与验证的唯一事实源，先于 spec.md 正文编写。术语/决策/契约/锚点/屏障的任何变更都必须先改本文件再改正文。",
   "spec_file": "../spec.md",
-  "spec_status": "draft",
+  "spec_status": "authoritative",
   "repo_root": "../../../..",
   "required_sections": [
     "1. 背景与目标",

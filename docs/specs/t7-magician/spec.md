@@ -1,6 +1,6 @@
 # MagiShield — T7 Shield GUI 客户端权威规格（Spec）
 
-**状态:** Draft（D33 已入 §9，代码落地、屏障全绿后与代码同批切回 Authoritative）
+**状态:** Authoritative（唯一权威）
 **版本:** 0.5（决策基线：D01–D34）
 **受众:** 开发（§3–§7 是实现与评审依据）、测试（§7–§8 与 §10 锚点是验收依据）、运维与客服（§5 错误模型是排障依据）、评审（§1、§9 是范围与归因依据）
 **范围:** 定义面向 Samsung PSSD T7 Shield（USB `04e8:61fc` / `04e8:61fb`）的 Rust + GTK4 + libadwaita GUI 客户端（运行目标平台为仅 Linux）的目标行为：设备枚举与锁定状态识别、TCG Opal「A 路」解锁与口令校验的字节级契约、传输层抽象与 Linux 传输行为、错误模型、状态机、UI 与口令安全纪律；不定义 B/C 路协议、固件与安全擦除能力。
@@ -1138,4 +1138,4 @@ pub fn next_environment_state(
 | 传输层契约 | `crates/magi-transport` 存在 | trait 契约测试通过，非 Linux 平台 `open` 返回通道不可用 | 同上，传输层屏障 PASS |
 | 应用层屏障 | `crates/magi-app` 存在 | `cargo test -p magi-app` 通过（含 UI 冒烟与环境状态机） | 同上，应用层屏障 PASS |
 
-**当前状态（Draft：D33/D34 变更中）**：D30（环境就绪引导）、D31（窗口尺寸自适应）、D32（PermissionDenied 独立呈现码）已随代码落地（提交 `68c943f`）；本轮 D33（权限修复改 `setfacl` 即时 ACL、零持久化）与双审计修订（spec 缺陷 P0×1/P1×5/P2×8 + UI/Rust 组织审计）已入正文与 manifest，代码侧 D1–D7 修订待落地，`spec_status=draft`，审计对新契约/锚点的缺失降级为 warning 不阻断。代码落地、`cargo test --workspace` 全绿、真机验证（产品路径修复→授权→ACL 生效→胶囊消失）通过后，头部与本段统一切回 Authoritative 并与代码同批提交。上一基线（2026-09-15）：三 crate 测试 49+57+25、三件套全绿（详见 git 历史）。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码。
+**当前状态（Authoritative）**：D30 至 D34 全部落地——D30（环境就绪引导）、D31（窗口尺寸自适应）、D32（PermissionDenied 独立呈现码）随代码落地（提交 `68c943f`）；D33（权限修复改 `setfacl` 即时 ACL + AutoAttempts 自动装载/修复各至多一次 + 零持久化）与 D34（纯逻辑层组织约束）同批完成，并包含双审计代码修订 D1–D7 与文件重组（`device/` 域、UI 三页拆分、WindowState 分域、窗口自持 Receiver、启动扫描与环境自检异步化、静态文案装配单点化）。验证基线（2026-09-22 实跑）：`cargo test --workspace` 三 crate 测试 50+57+25 全绿；三件套全绿（`test_audit_spec` 17 tests OK、`audit_spec` PASS 零 warning、`barriers` 三屏障 PASS）。真机验证（产品路径修复设备权限→polkit 授权→setfacl 即时生效→胶囊消失）待 Task 10 现场补验（待验）。本文件为唯一权威规格：行为变更必须先在 §9 决策日志新增或归因决策 ID 并同步 `tools/audit_manifest.json`，全部验证 PASS 后再改代码。
