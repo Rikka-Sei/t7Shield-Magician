@@ -27,6 +27,7 @@ mod imp {
         pub issues_group: adw::PreferencesGroup,
         pub actions_group: adw::PreferencesGroup,
         pub action_load: adw::ButtonRow,
+        pub action_fix: adw::ButtonRow,
         pub action_recheck: adw::ButtonRow,
         pub(crate) window: RefCell<Option<glib::WeakRef<MainWindow>>>,
         /// 当前呈现中的问题行（reload 时整组替换）。
@@ -42,10 +43,13 @@ mod imp {
             let issues_group = adw::PreferencesGroup::new();
             let action_load = adw::ButtonRow::new();
             action_load.set_start_icon_name(Some("system-run-symbolic"));
+            let action_fix = adw::ButtonRow::new();
+            action_fix.set_start_icon_name(Some("emblem-system-symbolic"));
             let action_recheck = adw::ButtonRow::new();
             action_recheck.set_start_icon_name(Some("view-refresh-symbolic"));
             let actions_group = adw::PreferencesGroup::new();
             actions_group.add(&action_load);
+            actions_group.add(&action_fix);
             actions_group.add(&action_recheck);
             let page = adw::PreferencesPage::new();
             page.add(&issues_group);
@@ -64,6 +68,7 @@ mod imp {
                 issues_group,
                 actions_group,
                 action_load,
+                action_fix,
                 action_recheck,
                 window: RefCell::new(None),
                 issue_rows: RefCell::new(Vec::new()),
@@ -150,21 +155,31 @@ impl EnvironmentDialog {
                 imp.issue_rows.borrow_mut().push(row);
             }
         }
-        // 装载在飞：动作行转为忙碌呈现并禁用（单飞拒绝重入，状态机同样兜底）。
-        imp.action_load
-            .set_title(&t!(if loading {
-                "environment.action_load_busy"
-            } else {
-                "environment.action_load"
-            }));
+        // 修复动作在飞：动作行转为忙碌呈现并禁用（单飞拒绝重入，状态机同样兜底）。
+        let load_key = if loading {
+            "environment.action_load_busy"
+        } else {
+            "environment.action_load"
+        };
+        let fix_key = if loading {
+            "environment.action_fix_busy"
+        } else {
+            "environment.action_fix"
+        };
+        imp.action_load.set_title(&t!(load_key));
+        imp.action_fix.set_title(&t!(fix_key));
         imp.action_load.set_sensitive(!loading);
+        imp.action_fix.set_sensitive(!loading);
         imp.action_recheck.set_sensitive(!loading);
-        // 装载动作只在「模块缺失」问题时相关：权限问题装载无用，隐藏入口避免误导
-        // （装载已就绪的模块对权限问题不会有任何可见效果）。
+        // 修复动作按问题相关性呈现：装载行仅在模块缺失、修复行仅在权限问题。
         let module_missing = issues
             .iter()
             .any(|issue| matches!(issue, EnvironmentIssue::SgModuleMissing));
+        let permission_denied = issues
+            .iter()
+            .any(|issue| matches!(issue, EnvironmentIssue::SgNodePermissionDenied { .. }));
         imp.action_load.set_visible(module_missing || loading);
+        imp.action_fix.set_visible(permission_denied || loading);
     }
 
     /// 语言切换后重设对话框自身文案（问题行按缓存清单重建）。
@@ -195,6 +210,22 @@ impl EnvironmentDialog {
                     .and_then(|weak| weak.upgrade())
                 {
                     window.environment_load_requested();
+                }
+            }
+        ));
+        let this = self.clone();
+        imp.action_fix.connect_activated(glib::clone!(
+            #[weak]
+            this,
+            move |_| {
+                if let Some(window) = this
+                    .imp()
+                    .window
+                    .borrow()
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+                {
+                    window.environment_fix_requested();
                 }
             }
         ));

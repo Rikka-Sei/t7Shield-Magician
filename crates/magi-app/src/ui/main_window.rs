@@ -176,6 +176,8 @@ pub(crate) struct WindowState {
     /// 结果区重放缓存（语言切换后按新语言重放）。
     last_outcome: Option<StoredOutcome>,
     /// 最后一次设备扫描命中（relocalize 重放设备分组文案用；空态清除）。
+    /// 启动自动权限修复是否已用掉（§4.13 纪律：每次启动至多一次，D33）。
+    auto_fix_used: bool,
     last_hit: Option<ScanHit>,
     /// 打开中的口令对话框（语言切换时同步重渲染）。
     open_dialog: Option<glib::WeakRef<PasswordDialog>>,
@@ -1017,7 +1019,10 @@ impl MainWindow {
 
     /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（胶囊显隐 / 工作线程装载）。
     fn apply_environment_event(&self, event: EnvironmentEvent) {
-        let is_user_retry = matches!(event, EnvironmentEvent::LoadRequested);
+        let is_user_retry = matches!(
+            event,
+            EnvironmentEvent::LoadRequested | EnvironmentEvent::FixPermissionsRequested
+        );
         let (next, action) = {
             let mut state = self.state().borrow_mut();
             let (next, action) = next_environment_state(state.environment.clone(), event);
@@ -1025,8 +1030,8 @@ impl MainWindow {
             (next, action)
         };
         let action = match action {
-            // 纪律：自动装载（启动自检路径）每次启动至多一次；用户在向导中的
-            // 显式重试不受限。复检路径再次产出装载动作时转为呈现问题。
+            // 纪律：自动修复（装载与权限）各只在启动自检路径发生一次；复检路径再次
+            // 产出修复动作时转为呈现问题。用户在向导中的显式重试不受限。
             EnvironmentAction::LoadModule if !is_user_retry => {
                 let mut state = self.state().borrow_mut();
                 if state.auto_load_used {
@@ -1039,6 +1044,18 @@ impl MainWindow {
                     EnvironmentAction::LoadModule
                 }
             }
+            EnvironmentAction::FixPermissions if !is_user_retry => {
+                let mut state = self.state().borrow_mut();
+                if state.auto_fix_used {
+                    if let EnvironmentState::Fixing(issues) = &next {
+                        state.environment = EnvironmentState::Issue(issues.clone());
+                    }
+                    EnvironmentAction::ShowPill
+                } else {
+                    state.auto_fix_used = true;
+                    EnvironmentAction::FixPermissions
+                }
+            }
             other => other,
         };
         match action {
@@ -1046,6 +1063,7 @@ impl MainWindow {
             EnvironmentAction::ShowPill => self.imp().environment_pill.set_visible(true),
             EnvironmentAction::HidePill => self.imp().environment_pill.set_visible(false),
             EnvironmentAction::LoadModule => self.spawn_module_load(),
+            EnvironmentAction::FixPermissions => self.spawn_permission_fix(),
         }
         self.refresh_environment_dialog();
     }
@@ -1085,9 +1103,39 @@ impl MainWindow {
             EnvironmentState::Issue(issues) | EnvironmentState::LoadFailed(issues) => {
                 (issues.clone(), false)
             }
-            EnvironmentState::Loading(issues) => (issues.clone(), true),
+            EnvironmentState::Loading(issues) | EnvironmentState::Fixing(issues) => {
+                (issues.clone(), true)
+            }
             _ => (Vec::new(), false),
         }
+    }
+
+    /// 权限修复（§4.13，D33）：固定白名单命令在工作线程执行（写 uaccess 规则 +
+    /// udevadm reload + trigger，幂等且可逆）；结果回主线程复检一轮。
+    fn spawn_permission_fix(&self) {
+        let (sender, receiver) = async_channel::unbounded::<bool>();
+        std::thread::spawn(move || {
+            let argv = environment::permission_fix_command();
+            let ok = std::process::Command::new(argv[0])
+                .args(&argv[1..])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+            let _ = sender.send_blocking(ok);
+        });
+        let this = self.clone();
+        glib::MainContext::default().spawn_local(async move {
+            if let Ok(ok) = receiver.recv().await {
+                this.apply_environment_event(if ok {
+                    EnvironmentEvent::FixPermissionsSucceeded
+                } else {
+                    EnvironmentEvent::FixPermissionsFailed
+                });
+                // 收尾后统一复检：ACL 生效后节点可读写 → Ready。
+                let report = environment::inspect_environment();
+                this.apply_environment_event(EnvironmentEvent::CheckDone(report));
+            }
+        });
     }
 
     /// 打开引导向导（D30）：问题清单快照 + 装载状态；迁移时经弱引用刷新。
@@ -1121,6 +1169,11 @@ impl MainWindow {
     pub fn environment_recheck_requested(&self) {
         let report = environment::inspect_environment();
         self.apply_environment_event(EnvironmentEvent::CheckDone(report));
+    }
+
+    /// 引导向导「修复设备权限」入口（§4.13，D33：用户显式触发，单飞由状态机兜底）。
+    pub fn environment_fix_requested(&self) {
+        self.apply_environment_event(EnvironmentEvent::FixPermissionsRequested);
     }
 
     /// 入口行（按 `ActionId` 取操作分组的 `AdwButtonRow`）。
@@ -1158,6 +1211,7 @@ impl MainWindow {
         // §6：重新打开对话框 → 本会话的口令重试预算复位。
         self.state().borrow_mut().gate.open_dialog();
         let dialog = PasswordDialog::new(action);
+
         // relocalize 联动缓存：语言切换时同步重渲染打开中的对话框（弱引用，不阻止回收）。
         self.state().borrow_mut().open_dialog = Some(dialog.downgrade());
         let this = self.clone();

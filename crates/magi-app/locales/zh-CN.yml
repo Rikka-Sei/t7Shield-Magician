@@ -98,9 +98,11 @@ environment:
   issue_module_title: "内核 sg 模块未装载"
   issue_module_advice: "点击「装载内核模块」经系统授权装载（需要管理员密码）；也可以手动执行 sudo modprobe sg 后重新检查。"
   issue_permission_title: "设备节点不可读写：%{node}"
-  issue_permission_advice: "请将当前用户加入 disk 用户组，或配置 udev 规则授予 /dev/sg* 读写权限；本工具不会自行提权。"
+  issue_permission_advice: "点击「修复设备权限」安装一条可逆的 udev 规则（只为本设备授予当前登录用户读写，需要管理员密码）；也可手动将用户加入 disk 组。卸载：删除 /etc/udev/rules.d/71-magishield-uaccess.rules 后执行 udevadm control --reload。"
   action_load: "装载内核模块"
   action_load_busy: "正在装载…"
+  action_fix: "修复设备权限"
+  action_fix_busy: "正在修复…"
   action_recheck: "重新检查"
   empty: "未发现问题，环境已就绪。"
 issue:

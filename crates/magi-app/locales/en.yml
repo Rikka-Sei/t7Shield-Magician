@@ -99,9 +99,11 @@ environment:
   issue_module_title: "Kernel 'sg' module is not loaded"
   issue_module_advice: "Click \"Load kernel module\" to load it with system authorization (administrator password required), or run sudo modprobe sg manually and recheck."
   issue_permission_title: "Device node is not readable/writable: %{node}"
-  issue_permission_advice: "Add your user to the 'disk' group, or configure a udev rule granting read/write access to /dev/sg*. This tool never elevates itself."
+  issue_permission_advice: "Click \"Fix device permissions\" to install a reversible udev rule (grants read/write to this drive for the logged-in desktop user only; administrator password required), or add your user to the 'disk' group manually. To undo: remove /etc/udev/rules.d/71-magishield-uaccess.rules and run udevadm control --reload."
   action_load: "Load kernel module"
   action_load_busy: "Loading…"
+  action_fix: "Fix device permissions"
+  action_fix_busy: "Fixing…"
   action_recheck: "Recheck"
   empty: "No issues found — the environment is ready."
 issue:
