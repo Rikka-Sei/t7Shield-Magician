@@ -89,7 +89,7 @@ password:
   cancel: "取消"
   empty: "请输入密码"
 platform:
-  linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。运行环境缺失（内核模块、设备权限）时，会弹出的系统授权窗口向你索要管理员密码进行修复；也可以按引导向导中的手动指引自行处理。"
+  linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。运行环境缺失（内核模块、设备权限）时，会弹出系统授权窗口，向你索要管理员密码进行修复；也可以按引导向导中的手动指引自行处理。"
 environment:
   pill_label: "环境问题"
   pill_tooltip: "运行环境未就绪：点击查看引导向导"
