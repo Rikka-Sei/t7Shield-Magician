@@ -13,7 +13,7 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use rust_i18n::t;
 
-use crate::environment::EnvironmentIssue;
+use crate::device::environment::EnvironmentIssue;
 use crate::ui::MainWindow;
 
 mod imp {

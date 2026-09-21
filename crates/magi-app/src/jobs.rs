@@ -341,7 +341,7 @@ pub fn unlock_device(
 
     // §4.8：解锁序列收尾后观察 30 s（500 ms 间隔、≤60 次）；不发送任何重枚举触发命令。
     let vid = job.vid;
-    let (_, evidence) = crate::observation::observe_and_evaluate(
+    let (_, evidence) = crate::device::observation::observe_and_evaluate(
         || magi_transport::linux::scan::observe_reenumeration(vid),
         flags_before,
         || read_locking_flags(job),

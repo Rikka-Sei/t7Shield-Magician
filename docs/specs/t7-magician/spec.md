@@ -1127,7 +1127,7 @@ pub fn next_environment_state(
 | `test_environment_report_missing_module` | `crates/magi-app` | 环境自检报告 `sg` 模块缺失（D30） |
 | `test_environment_report_permission_denied` | `crates/magi-app` | 环境自检报告设备节点权限不足（D30） |
 | `test_environment_state_transitions` | `crates/magi-app` | 环境就绪状态机：检查/装载/失败/重检转换（D30） |
-| `test_window_size_scales_with_workarea` | `crates/magi-app` | 窗口默认尺寸随显示器几何推导、含上下限与无头回落（D31） |
+| `test_window_size_scales_with_display` | `crates/magi-app` | 窗口默认尺寸随显示器几何推导、含上下限与无头回落（D31） |
 | `test_environment_pill_present` | `crates/magi-app` | HeaderBar 环境胶囊存在、警示样式、就绪时隐藏（D30） |
 
 兼容/迁移屏障表（条件 / 满足标准 / 验收证据）：

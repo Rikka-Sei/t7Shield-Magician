@@ -1647,7 +1647,7 @@
       "reason": "环境就绪状态机：检查/装载/失败/重检转换（D30）"
     },
     {
-      "name": "test_window_size_scales_with_workarea",
+      "name": "test_window_size_scales_with_display",
       "source_globs": [
         "crates/magi-app/**/*.rs"
       ],

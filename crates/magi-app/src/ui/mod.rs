@@ -14,6 +14,7 @@ pub mod main_window;
 pub mod password_dialog;
 pub mod settings_dialog;
 pub mod environment_dialog;
+pub mod environment_flow;
 
 pub use main_window::MainWindow;
 pub use password_dialog::PasswordDialog;

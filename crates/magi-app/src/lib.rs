@@ -22,14 +22,11 @@ pub mod controller;
 /// 内存环形缓冲（512 条）+ 脱敏导出（§6「合规与保留」）。
 pub mod diagnostics;
 
-/// §4.13 环境就绪引导（D30）：自检、模块装载状态机与固定装载命令（纯逻辑，无 GTK）。
-pub mod environment;
+/// 设备域纯逻辑（D34）：环境就绪状态机、重枚举观察等单一关注点模块，收进域目录。
+pub mod device;
 
 /// 工作线程 + channel + `AppEvent` 投递（`spawn_device_job`）。
 pub mod jobs;
-
-/// 重枚举观察采样 → `ReEnumerationObservation` 的纯映射与轮询驱动。
-pub mod observation;
 
 /// `AppError` → 呈现码映射与文案键（§4.13 表）。
 pub mod presentation;

@@ -68,7 +68,7 @@ pub fn inspect_environment_in(sys_root: &Path, dev_root: &Path) -> EnvironmentRe
 }
 /// 用户名白名单字符（字母数字与 `_`/`-`/`.`）：ACL 命令以 argv 直传 `pkexec`，
 /// 不经 shell；校验是为防环境变量被构造出形如路径穿越或参数注入的值。
-fn user_is_safe(user: &str) -> bool {
+fn username_is_allowed(user: &str) -> bool {
     !user.is_empty()
         && user
             .bytes()
@@ -76,7 +76,7 @@ fn user_is_safe(user: &str) -> bool {
 }
 
 /// 设备节点白名单：`/dev/sg` + 纯数字（来源即 sysfs 扫描，双重校验）。
-fn node_is_safe(node: &str) -> bool {
+fn sg_node_is_allowed(node: &str) -> bool {
     node.strip_prefix("/dev/sg")
         .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()))
 }
@@ -101,7 +101,7 @@ pub fn current_user() -> Option<String> {
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .ok()
-        .filter(|user| user_is_safe(user))
+        .filter(|user| username_is_allowed(user))
 }
 
 /// 权限修复命令（D33：`pkexec setfacl -m u:<user>:rw <nodes…>` 即时 ACL，
@@ -120,7 +120,7 @@ pub fn permission_fix_commands_with_path(
     nodes: &[String],
     path_var: Option<&str>,
 ) -> Option<Vec<String>> {
-    let user = user.filter(|user| user_is_safe(user))?;
+    let user = user.filter(|user| username_is_allowed(user))?;
     let setfacl = resolve_setfacl(path_var)?;
     let mut argv = vec![
         "pkexec".to_string(),
@@ -129,7 +129,7 @@ pub fn permission_fix_commands_with_path(
         format!("u:{user}:rw"),
     ];
     for node in nodes {
-        node_is_safe(node).then_some(())?;
+        sg_node_is_allowed(node).then_some(())?;
         argv.push(node.clone());
     }
     (argv.len() > 4).then_some(argv)
@@ -190,73 +190,82 @@ pub enum EnvironmentAction {
     HidePill,
 }
 
+/// 启动引导链的一次性自动动作（D33）：自动装载与自动权限修复各至多一次，
+/// 由状态机在发起时置位；复检路径不再触发。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AutoAttempts {
+    /// 自动装载已发起。
+    pub module: bool,
+    /// 自动权限修复已发起。
+    pub permissions: bool,
+}
+
 /// 纯迁移函数（§4.13 转换表）：给定当前态与事件，返回下一态与对外动作。
 ///
-/// 启动路径（`Unknown`/`Checking`）发现模块缺失时自动进入装载；复检路径
-/// （`Issue`/`LoadFailed`/`Ready` 之后的 `CheckDone`）只刷新呈现，不再自动装载
-/// ——自动装载每次启动至多一次的纪律由调用方保证（重试必须用户显式触发）。
+/// 启动路径（`Unknown`/`Checking`）经 [`startup_verdict`] 裁决：自动装载/自动权限
+/// 修复各至多一次（[`AutoAttempts`] 置位，D33）；复检路径（`Issue`/`LoadFailed`/
+/// `Ready` 之后的 `CheckDone`）只刷新呈现，重试必须用户显式触发。
 pub fn next_environment_state(
     state: EnvironmentState,
     event: EnvironmentEvent,
+    autos: &mut AutoAttempts,
 ) -> (EnvironmentState, EnvironmentAction) {
     use EnvironmentAction as A;
     use EnvironmentEvent as E;
     use EnvironmentState as S;
     match (state, event) {
-        // 启动自检路径：空 → 就绪；含模块缺失 → 自动装载；其余问题 → 呈现。
-        (S::Unknown | S::Checking, E::CheckDone(report)) => startup_done(report),
-        // 装载收尾：成功 → 复检；失败 → 带回问题清单呈现。
+        (S::Unknown | S::Checking, E::CheckDone(report)) => startup_verdict(report, autos),
         (S::Loading(_), E::LoadSucceeded) => (S::Checking, A::None),
         (S::Loading(issues), E::LoadFailed) => (S::LoadFailed(issues), A::ShowPill),
-        // 单飞：装载在飞时重复请求与修复请求都被拒绝（状态不变）。
-        (S::Loading(issues), E::LoadRequested) => (S::Loading(issues), A::None),
-        (S::Loading(issues), E::FixPermissionsRequested) => (S::Loading(issues), A::None),
-        // 权限修复收尾：成功 → 复检；失败 → 回到 Issue 呈现手动指引（D33）。
+        (S::Loading(issues), E::LoadRequested | E::FixPermissionsRequested) => {
+            (S::Loading(issues), A::None)
+        }
         (S::Fixing(_), E::FixPermissionsSucceeded) => (S::Checking, A::None),
         (S::Fixing(issues), E::FixPermissionsFailed) => (S::Issue(issues), A::ShowPill),
-        // 单飞：修复在飞时重复请求与装载请求都被拒绝（状态不变）。
-        (S::Fixing(issues), E::FixPermissionsRequested) => (S::Fixing(issues), A::None),
-        (S::Fixing(issues), E::LoadRequested) => (S::Fixing(issues), A::None),
-        // 用户在向导中显式重试装载或修复。
+        (S::Fixing(issues), E::FixPermissionsRequested | E::LoadRequested) => {
+            (S::Fixing(issues), A::None)
+        }
         (S::Issue(issues) | S::LoadFailed(issues), E::LoadRequested) => {
             (S::Loading(issues), A::LoadModule)
         }
         (S::Issue(issues) | S::LoadFailed(issues), E::FixPermissionsRequested) => {
             (S::Fixing(issues), A::FixPermissions)
         }
-        // 复检：刷新问题清单；空 → 就绪。
-        (S::Issue(_) | S::LoadFailed(_), E::CheckDone(report)) => recheck_done(report),
-        (S::Ready, E::CheckDone(report)) => recheck_done(report),
-        // 其余组合（如 Ready + LoadRequested）无定义动作：保持现状。
+        (S::Issue(_) | S::LoadFailed(_) | S::Ready, E::CheckDone(report)) => recheck_verdict(report),
         (state, _) => (state, A::None),
     }
 }
 
-/// 启动自检路径的裁决（自动装载出口）。
-fn startup_done(report: EnvironmentReport) -> (EnvironmentState, EnvironmentAction) {
+/// 启动引导链裁决：自动装载/修复各至多一次（AutoAttempts 置位），循环由构造排除。
+fn startup_verdict(
+    report: EnvironmentReport,
+    autos: &mut AutoAttempts,
+) -> (EnvironmentState, EnvironmentAction) {
     use EnvironmentAction as A;
     use EnvironmentState as S;
     if report.issues.is_empty() {
-        (S::Ready, A::HidePill)
-    } else if report
+        return (S::Ready, A::HidePill);
+    }
+    let module_missing = report
         .issues
         .iter()
-        .any(|issue| matches!(issue, EnvironmentIssue::SgModuleMissing))
-    {
+        .any(|issue| matches!(issue, EnvironmentIssue::SgModuleMissing));
+    let permission_denied = report
+        .issues
+        .iter()
+        .any(|issue| matches!(issue, EnvironmentIssue::SgNodePermissionDenied { .. }));
+    if module_missing && !autos.module {
+        autos.module = true;
         (S::Loading(report.issues), A::LoadModule)
-    } else if report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue, EnvironmentIssue::SgNodePermissionDenied { .. }))
-    {
-        // 启动路径的自动权限修复（D33）；复检路径只刷新呈现，重试归用户。
+    } else if permission_denied && !module_missing && !autos.permissions {
+        autos.permissions = true;
         (S::Fixing(report.issues), A::FixPermissions)
     } else {
         (S::Issue(report.issues), A::ShowPill)
     }
 }
-/// 复检路径的裁决（不自动装载，只刷新呈现）。
-fn recheck_done(report: EnvironmentReport) -> (EnvironmentState, EnvironmentAction) {
+/// 复检路径的裁决（不自动动作，只刷新呈现）。
+fn recheck_verdict(report: EnvironmentReport) -> (EnvironmentState, EnvironmentAction) {
     use EnvironmentAction as A;
     use EnvironmentState as S;
     if report.issues.is_empty() {
@@ -348,7 +357,7 @@ mod tests {
         assert_eq!(inspect_environment_in(&sys, &dev).issues.len(), 1);
     }
 
-    /// 锚点（§10）：环境就绪状态机全表转换。
+    /// 锚点（§10）：环境就绪状态机全表转换（含 AutoAttempts 一次性纪律，D33）。
     #[test]
     fn test_environment_state_transitions() {
         use EnvironmentAction as A;
@@ -359,149 +368,100 @@ mod tests {
             issues: vec![EnvironmentIssue::SgModuleMissing],
         };
         let denied = EnvironmentReport {
-            issues: vec![EnvironmentIssue::SgNodePermissionDenied {
-                node: "/dev/sg0".to_string(),
-            }],
+            issues: vec![EnvironmentIssue::SgNodePermissionDenied { node: "/dev/sg0".to_string() }],
         };
         let ready = EnvironmentReport::default();
+        let mut autos = AutoAttempts::default();
 
-        // 启动：空 → Ready + HidePill。
-        let (s, a) = next_environment_state(S::Unknown, E::CheckDone(ready.clone()));
-        assert_eq!(s, S::Ready);
-        assert_eq!(a, A::HidePill);
+        // 启动：空 → Ready；模块缺失 → 自动装载（置位 autos.module）。
+        let (s, a) = next_environment_state(S::Unknown, E::CheckDone(ready.clone()), &mut autos);
+        assert_eq!((s, a), (S::Ready, A::HidePill));
+        let (s, a) = next_environment_state(S::Unknown, E::CheckDone(missing.clone()), &mut autos);
+        assert_eq!((s.clone(), a), (S::Loading(missing.issues.clone()), A::LoadModule));
+        assert!(autos.module && !autos.permissions);
 
-        // 启动：模块缺失 → Loading + LoadModule（自动装载出口）。
-        let (s, a) = next_environment_state(S::Checking, E::CheckDone(missing.clone()));
-        assert_eq!(s, S::Loading(missing.issues.clone()));
-        assert_eq!(a, A::LoadModule);
+        // 装载成功复检模块仍在 → 不再自动装载（防循环），转 Issue。
+        let (s, _) = next_environment_state(s, E::LoadSucceeded, &mut autos);
+        let (s, a) = next_environment_state(s, E::CheckDone(missing.clone()), &mut autos);
+        assert_eq!((s, a), (S::Issue(missing.issues.clone()), A::ShowPill));
 
-        // 启动：仅权限问题 → 自动权限修复（D33）。
-        let (s, a) = next_environment_state(S::Unknown, E::CheckDone(denied.clone()));
-        assert_eq!(s, S::Fixing(denied.issues.clone()));
-        assert_eq!(a, A::FixPermissions);
+        // 引导链串联：装载成功复检发现权限问题 → 自动修复（第二个标志位）。
+        let mut autos = AutoAttempts::default();
+        let (s, _) = next_environment_state(S::Unknown, E::CheckDone(missing.clone()), &mut autos);
+        let (s, _) = next_environment_state(s, E::LoadSucceeded, &mut autos);
+        let (s, a) = next_environment_state(s, E::CheckDone(denied.clone()), &mut autos);
+        assert_eq!((s.clone(), a), (S::Fixing(denied.issues.clone()), A::FixPermissions));
+        assert!(autos.module && autos.permissions);
+        let (s, _) = next_environment_state(s, E::FixPermissionsSucceeded, &mut autos);
+        let (s, a) = next_environment_state(s, E::CheckDone(ready.clone()), &mut autos);
+        assert_eq!((s, a), (S::Ready, A::HidePill));
 
-        // 装载成功 → Checking（等待复检）。
-        let (s, a) = next_environment_state(S::Loading(missing.issues.clone()), E::LoadSucceeded);
-        assert_eq!(s, S::Checking);
-        assert_eq!(a, A::None);
+        // Ready 后复发 → Issue（不自动）；用户显式重试不受限。
+        let (s, a) = next_environment_state(S::Ready, E::CheckDone(denied.clone()), &mut autos);
+        assert_eq!((s.clone(), a), (S::Issue(denied.issues.clone()), A::ShowPill));
+        let (s, a) = next_environment_state(s, E::LoadRequested, &mut autos);
+        assert_eq!((s, a), (S::Loading(denied.issues.clone()), A::LoadModule));
+        let (s, a) = next_environment_state(
+            S::Issue(denied.issues.clone()),
+            E::FixPermissionsRequested,
+            &mut autos,
+        );
+        assert_eq!((s, a), (S::Fixing(denied.issues.clone()), A::FixPermissions));
 
-        // 单飞：装载在飞时重复请求被拒绝。
-        let (s2, a2) =
-            next_environment_state(S::Loading(missing.issues.clone()), E::LoadRequested);
-        assert_eq!(s2, S::Loading(missing.issues.clone()));
-        assert_eq!(a2, A::None);
-
-        // 装载失败 → LoadFailed + ShowPill，问题清单带回。
-        let (s, a) = next_environment_state(S::Loading(missing.issues.clone()), E::LoadFailed);
-        assert_eq!(s, S::LoadFailed(missing.issues.clone()));
-        assert_eq!(a, A::ShowPill);
-
-        // 用户在向导中显式重试 → Loading + LoadModule。
-        let (s, a) = next_environment_state(s, E::LoadRequested);
-        assert_eq!(s, S::Loading(missing.issues.clone()));
-        assert_eq!(a, A::LoadModule);
-
-        // 复检路径：空 → Ready + HidePill。
-        let (s, a) = next_environment_state(S::Issue(denied.issues.clone()), E::CheckDone(ready.clone()));
-        assert_eq!(s, S::Ready);
-        assert_eq!(a, A::HidePill);
-
-        // 复检路径：非空 → Issue 刷新 + ShowPill；即便是模块缺失也不自动装载。
-        let (s, a) = next_environment_state(S::LoadFailed(vec![]), E::CheckDone(missing.clone()));
-        assert_eq!(s, S::Issue(missing.issues.clone()));
-        assert_eq!(a, A::ShowPill);
-
-        // 权限修复（D33）：启动自动 → Fixing + FixPermissions；成功 → 复检；
-        // 失败 → Issue 呈现；单飞拒绝并发；用户显式重试；复检不自动修复。
-        let (s, a) = next_environment_state(S::Checking, E::CheckDone(denied.clone()));
-        assert_eq!(s, S::Fixing(denied.issues.clone()));
-        assert_eq!(a, A::FixPermissions);
-        let (s, a) = next_environment_state(s, E::FixPermissionsSucceeded);
-        assert_eq!(s, S::Checking);
-        assert_eq!(a, A::None);
+        // 失败分支与单飞/总则。
+        let (s, a) = next_environment_state(S::Loading(missing.issues.clone()), E::LoadFailed, &mut autos);
+        assert_eq!((s, a), (S::LoadFailed(missing.issues.clone()), A::ShowPill));
         let (s, a) = next_environment_state(
             S::Fixing(denied.issues.clone()),
             E::FixPermissionsFailed,
+            &mut autos,
         );
-        assert_eq!(s, S::Issue(denied.issues.clone()));
-        assert_eq!(a, A::ShowPill);
-        let (s2, a2) = next_environment_state(
-            S::Fixing(vec![]),
-            E::FixPermissionsRequested,
-        );
-        assert_eq!(s2, S::Fixing(vec![]));
+        assert_eq!((s, a), (S::Issue(denied.issues.clone()), A::ShowPill));
+        for state in [S::Loading(vec![]), S::Fixing(vec![])] {
+            for event in [E::LoadRequested, E::FixPermissionsRequested] {
+                let got = next_environment_state(state.clone(), event, &mut autos);
+                assert_eq!(got, (state.clone(), A::None));
+            }
+        }
+        let got = next_environment_state(S::Ready, E::LoadRequested, &mut autos);
+        assert_eq!(got, (S::Ready, A::None));
+        assert_eq!(module_load_command(), &["pkexec", "modprobe", "sg"]);
+    }
+
     /// 锚点（§10）：权限修复命令固定形态（D33）——argv 直传、user/nodes 白名单。
     #[test]
     fn test_permission_fix_command_whitelist() {
-        let setfacl_dir = tempdir();
-        let setfacl = setfacl_dir.path().join("setfacl");
-        fs::write(&setfacl, b"#!/bin/sh\n").unwrap();
-        let path = format!("{}:{}", setfacl_dir.path().display(), "/usr/bin");
-
-        // 形态固定：pkexec <setfacl 绝对路径> -m u:<user>:rw <nodes…>。
+        let dir = tempdir();
+        fs::write(dir.path().join("setfacl"), b"#!/bin/sh\n").unwrap();
+        let path = format!("{}:/usr/bin", dir.path().display());
         let nodes = vec!["/dev/sg0".to_string(), "/dev/sg1".to_string()];
-        let argv = permission_fix_commands(Some("rikki"), &nodes)
-            .inspect_err_msg_env(path.as_str());
-        let argv = {
-            // 局部辅助：带 PATH 构造（测试环境隔离，不污染进程 PATH）。
-            struct WithPath<'a>(&'a str);
-            impl<'a> WithPath<'a> {
-                fn build(&self, user: Option<&str>, nodes: &[String]) -> Option<Vec<String>> {
-                    // 直接内联调用会读进程 PATH；这里复用同一实现路径：
-                    // 用环境变量保存/恢复的方式不可重入，改为构造再校验。
-                    let _ = self;
-                    permission_fix_commands_with_path(user, nodes, self.0)
-                }
-            }
-            WithPath(path.as_str()).build(Some("rikki"), &nodes)
-        };
-        let argv = argv.expect("合法输入必须构造出命令");
+
+        let argv = permission_fix_commands_with_path(Some("rikki"), &nodes, Some(&path))
+            .expect("合法输入必须构造出命令");
         assert_eq!(argv[0], "pkexec");
         assert!(argv[1].ends_with("/setfacl"));
         assert_eq!(argv[2], "-m");
         assert_eq!(argv[3], "u:rikki:rw");
         assert_eq!(argv[4..], nodes);
 
-        // 白名单拒绝：非法用户名、非法节点、空节点清单、找不到 setfacl。
-        assert!(permission_fix_commands(Some("rikki;rm"), &nodes,).is_none() || {
-            // 非法用户在进程 PATH 语义下同样应被拒绝；此处显式校验用户白名单。
-            false
-        });
-        assert!(!user_is_safe("rikki;rm -rf /"));
-        assert!(!user_is_safe(""));
-        assert!(!user_is_safe("a/b"));
-        assert!(user_is_safe("rikki"));
-        assert!(user_is_safe("a.b-c_d"));
-        assert!(node_is_safe("/dev/sg0"));
-        assert!(!node_is_safe("/dev/sg0/../../etc"));
-        assert!(!node_is_safe("/dev/nvme0"));
-        assert!(!node_is_safe("/dev/sg"));
-    }
+        assert!(permission_fix_commands_with_path(Some("rikki;rm"), &nodes, Some(&path)).is_none());
+        assert!(permission_fix_commands_with_path(Some("a/b"), &nodes, Some(&path)).is_none());
+        assert!(permission_fix_commands_with_path(None, &nodes, Some(&path)).is_none());
+        assert!(permission_fix_commands_with_path(Some("rikki"), &[], Some(&path)).is_none());
+        assert!(permission_fix_commands_with_path(
+            Some("rikki"),
+            &vec!["/dev/nvme0".to_string()],
+            Some(&path)
+        )
+        .is_none());
+        assert!(permission_fix_commands_with_path(Some("rikki"), &nodes, None).is_none());
+        assert!(permission_fix_commands_with_path(Some("rikki"), &nodes, Some("/nonexistent")).is_none());
 
-    /// 锚点（§10）：权限修复命令固定白名单且规则含 uaccess、VID 限定（D33）。
-    #[test]
-    fn test_permission_fix_command_whitelist() {
-        let argv = permission_fix_command();
-        // 形态固定：pkexec sh -c <常量脚本>，无任何用户输入拼接。
-        assert_eq!(argv.len(), 4);
-        assert_eq!(argv[0], "pkexec");
-        assert_eq!(argv[1], "sh");
-        assert_eq!(argv[2], "-c");
-        let script = argv[3];
-        // 规则要素：三星 VID 限定 + scsi_generic + uaccess（登录会话用户 ACL）。
-        assert!(script.contains("04e8"));
-        assert!(script.contains("scsi_generic"));
-        assert!(script.contains("uaccess"));
-        // 重载与触发齐备。
-        assert!(script.contains("udevadm control --reload"));
-        // 脚本内嵌的规则路径与导出常量一致（concat! 只收字面量，测试防漂移）。
-        assert!(script.contains(UDEV_RULE_PATH));
-        // 无害性：唯一写入痕迹是一个规则文件；无删除/格式化类命令。
-        assert_eq!(script.matches(".rules").count(), 1);
-        assert_eq!(script.matches('>').count(), 1);
-        assert!(!script.contains("rm "));
-        // 幂等：常量脚本每次执行写入相同内容。
-        assert_eq!(permission_fix_command(), permission_fix_command());
+        assert!(username_is_allowed("a.b-c_d") && sg_node_is_allowed("/dev/sg12"));
+        assert!(!username_is_allowed("") && !username_is_allowed("rikki;rm -rf /"));
+        assert!(!sg_node_is_allowed("/dev/sg"));
+        assert!(!sg_node_is_allowed("/dev/sg0/../../etc"));
+        assert!(!sg_node_is_allowed("/dev/nvme0"));
     }
 
     /// 临时目录守卫（测试结束清理）。
