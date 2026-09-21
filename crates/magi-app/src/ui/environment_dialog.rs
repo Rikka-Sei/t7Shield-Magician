@@ -35,7 +35,7 @@ mod imp {
         /// 最近一次刷新的问题清单（relocalize 重建行文案用）。
         pub(crate) last_issues: RefCell<Vec<EnvironmentIssue>>,
         /// 最近一次刷新的装载在飞标记。
-        pub(crate) last_loading: std::cell::Cell<bool>,
+        pub(crate) last_in_flight: std::cell::Cell<Option<crate::ui::environment_flow::InFlight>>,
     }
 
     impl Default for EnvironmentDialog {
@@ -73,7 +73,7 @@ mod imp {
                 window: RefCell::new(None),
                 issue_rows: RefCell::new(Vec::new()),
                 last_issues: RefCell::new(Vec::new()),
-                last_loading: std::cell::Cell::new(false),
+                last_in_flight: std::cell::Cell::new(None),
             }
         }
     }
@@ -109,20 +109,28 @@ glib::wrapper! {
 
 impl EnvironmentDialog {
     /// 构造对话框：装配文案、当前问题清单与装载状态，并接线修复动作。
-    pub fn new(window: &MainWindow, issues: &[EnvironmentIssue], loading: bool) -> Self {
+    pub fn new(
+        window: &MainWindow,
+        issues: &[EnvironmentIssue],
+        in_flight: Option<crate::ui::environment_flow::InFlight>,
+    ) -> Self {
         let dialog: Self = glib::Object::new();
         *dialog.imp().window.borrow_mut() = Some(window.downgrade());
         dialog.relocalize();
-        dialog.reload(issues, loading);
+        dialog.reload(issues, in_flight);
         dialog.connect_rows();
         dialog
     }
 
     /// 刷新问题列表与动作行状态（环境状态机每次迁移后调用）。
-    pub fn reload(&self, issues: &[EnvironmentIssue], loading: bool) {
+    pub fn reload(
+        &self,
+        issues: &[EnvironmentIssue],
+        in_flight: Option<crate::ui::environment_flow::InFlight>,
+    ) {
         let imp = self.imp();
         *imp.last_issues.borrow_mut() = issues.to_vec();
-        imp.last_loading.set(loading);
+        imp.last_in_flight.set(in_flight);
         // 重建问题行：先移除旧行，再按确定性顺序补新行。
         for row in imp.issue_rows.borrow().iter() {
             imp.issues_group.remove(row);
@@ -155,22 +163,23 @@ impl EnvironmentDialog {
                 imp.issue_rows.borrow_mut().push(row);
             }
         }
-        // 修复动作在飞：动作行转为忙碌呈现并禁用（单飞拒绝重入，状态机同样兜底）。
-        let load_key = if loading {
+        // 修复动作在飞：各行忙碌文案与禁用独立键控（装载行只在 Loading 在飞时忙碌，
+        // 修复行只在 Fixing 在飞时忙碌——不共用单一布尔，消除非在飞行的误导文案）。
+        let load_busy = matches!(in_flight, Some(crate::ui::environment_flow::InFlight::Loading));
+        let fix_busy = matches!(in_flight, Some(crate::ui::environment_flow::InFlight::Fixing));
+        imp.action_load.set_title(&t!(if load_busy {
             "environment.action_load_busy"
         } else {
             "environment.action_load"
-        };
-        let fix_key = if loading {
+        }));
+        imp.action_fix.set_title(&t!(if fix_busy {
             "environment.action_fix_busy"
         } else {
             "environment.action_fix"
-        };
-        imp.action_load.set_title(&t!(load_key));
-        imp.action_fix.set_title(&t!(fix_key));
-        imp.action_load.set_sensitive(!loading);
-        imp.action_fix.set_sensitive(!loading);
-        imp.action_recheck.set_sensitive(!loading);
+        }));
+        imp.action_load.set_sensitive(!load_busy);
+        imp.action_fix.set_sensitive(!fix_busy);
+        imp.action_recheck.set_sensitive(in_flight.is_none());
         // 修复动作按问题相关性呈现：装载行仅在模块缺失、修复行仅在权限问题。
         let module_missing = issues
             .iter()
@@ -178,8 +187,8 @@ impl EnvironmentDialog {
         let permission_denied = issues
             .iter()
             .any(|issue| matches!(issue, EnvironmentIssue::SgNodePermissionDenied { .. }));
-        imp.action_load.set_visible(module_missing || loading);
-        imp.action_fix.set_visible(permission_denied || loading);
+        imp.action_load.set_visible(module_missing || load_busy);
+        imp.action_fix.set_visible(permission_denied || fix_busy);
     }
 
     /// 语言切换后重设对话框自身文案（问题行按缓存清单重建）。
@@ -190,8 +199,8 @@ impl EnvironmentDialog {
         imp.issues_group.set_title(&t!("environment.issues_group"));
         imp.action_recheck.set_title(&t!("environment.action_recheck"));
         let issues = imp.last_issues.borrow().clone();
-        let loading = imp.last_loading.get();
-        self.reload(&issues, loading);
+        let in_flight = imp.last_in_flight.get();
+        self.reload(&issues, in_flight);
     }
 
     /// 修复动作接线：转发到主窗口的环境状态机入口。

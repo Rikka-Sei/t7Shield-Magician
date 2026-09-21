@@ -783,8 +783,9 @@ pub enum AppError {
     EmptyPassword,
 }
 
-/// 在工作线程执行 `job`，把 `AppEvent` 投递回主线程；同一设备最多一个在飞任务。
-pub fn spawn_device_job<F>(dev: DeviceId, job: F) -> Result<(), AppError>
+/// 在工作线程执行 `job`，返回事件通道供调用方窗口在自己的 `MainContext` 消费循环
+/// 直连消费（窗口自持 Receiver，无全局事件汇）；同一设备最多一个在飞任务。
+pub fn spawn_device_job<F>(dev: DeviceId, job: F) -> Result<async_channel::Receiver<AppEvent>, AppError>
 where F: FnOnce(&dyn Fn(AppEvent)) -> Result<Option<UnlockEvidence>, AppError> + Send + 'static;
 ```
 

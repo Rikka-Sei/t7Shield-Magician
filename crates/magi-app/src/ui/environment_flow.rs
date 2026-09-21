@@ -11,6 +11,13 @@ use crate::device::environment::{self, EnvironmentEvent, EnvironmentState, next_
 use crate::ui::MainWindow;
 use crate::ui::environment_dialog::EnvironmentDialog;
 
+/// 环境域在飞操作键（向导各行忙碌文案与可见性按此键控，不共用单一布尔）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InFlight {
+    Loading,
+    Fixing,
+}
+
 impl MainWindow {
     /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（一次性纪律由状态机与 env_autos 保证）。
     pub(crate) fn apply_environment_event(&self, event: EnvironmentEvent) {
@@ -111,24 +118,26 @@ impl MainWindow {
         });
     }
 
-    /// 当前问题清单与装载在飞标记的呈现快照。
-    pub(crate) fn environment_snapshot(&self) -> (Vec<environment::EnvironmentIssue>, bool) {
+    /// 当前问题清单与在飞操作键的呈现快照（Loading→装载在飞、Fixing→修复在飞）。
+    pub(crate) fn environment_snapshot(
+        &self,
+    ) -> (Vec<environment::EnvironmentIssue>, Option<InFlight>) {
         let env = self.imp().env.borrow();
         match &env.state {
             EnvironmentState::Issue(issues) | EnvironmentState::LoadFailed(issues) => {
-                (issues.clone(), false)
+                (issues.clone(), None)
             }
-            EnvironmentState::Loading(issues) | EnvironmentState::Fixing(issues) => {
-                (issues.clone(), true)
-            }
-            _ => (Vec::new(), false),
+            EnvironmentState::Loading(issues) => (issues.clone(), Some(InFlight::Loading)),
+            EnvironmentState::Fixing(issues) => (issues.clone(), Some(InFlight::Fixing)),
+            _ => (Vec::new(), None),
         }
     }
 
+
     /// 打开引导向导（D30）：问题清单快照 + 装载状态；迁移时经弱引用刷新。
     pub(crate) fn present_environment_dialog(&self) {
-        let (issues, loading) = self.environment_snapshot();
-        let dialog = EnvironmentDialog::new(self, &issues, loading);
+        let (issues, in_flight) = self.environment_snapshot();
+        let dialog = EnvironmentDialog::new(self, &issues, in_flight);
         self.imp().dialogs.borrow_mut().environment = Some(dialog.downgrade());
         dialog.present(Some(self));
     }
@@ -143,8 +152,8 @@ impl MainWindow {
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = dialog {
-            let (issues, loading) = self.environment_snapshot();
-            dialog.reload(&issues, loading);
+            let (issues, in_flight) = self.environment_snapshot();
+            dialog.reload(&issues, in_flight);
         }
     }
 
