@@ -485,6 +485,97 @@ main_window 收敛为窗口骨架/装配/路由/作业与口令流程（约 -600
 
 ---
 
+### Task 4b: WindowState 分域 + 外壳子结构体 + 接线归位（用户裁定「方案 A 治到底」）
+
+**Files:**
+- Modify: `crates/magi-app/src/ui/main_window.rs`（删 `WindowState`，imp 改持五个独立域 RefCell；外壳字段组 `HeaderBarWidgets`/`SidebarWidgets`；`prompt_password` 收敛）
+- Create: 无新文件（域结构体定义在 main_window.rs 顶部，随域消费者跨文件可见）
+- Modify: `crates/magi-app/src/ui/password_dialog.rs`（提交回调接线迁入）
+- Modify: `crates/magi-app/src/settings.rs`（`apply_theme` 迁入）
+- Modify: `crates/magi-app/src/ui/mod.rs`（删 `apply_theme`，只留模块声明）
+- Modify: `crates/magi-app/src/lib.rs`（`connect_startup` 改调 `settings::apply_theme`）
+
+**Interfaces:**
+- Consumes: T3 的 `environment_flow.rs`（访问 `imp.env` 域）、T4 的页结构体（访问 `imp.replay`/`imp.job` 域）。
+- Produces: imp 上的域字段（后续任务与测试的访问路径）：
+  - `pub header: HeaderBarWidgets`、`pub sidebar: SidebarWidgets`（外壳）
+  - `pub rescan: RefCell<RescanState>`、`pub job: RefCell<JobState>`、`pub replay: RefCell<ReplayState>`、`pub dialogs: RefCell<DialogRefs>`、`pub env: RefCell<EnvState>`
+
+- [ ] **Step 1: 域结构体与 imp 重组（编译器驱动，行为零变化）**
+
+删除 `WindowState` 与 `state()` 访问器，代之以：
+
+```rust
+/// 作业编排域：单飞闸门、在飞设备/动作与取消标志（不变量：device 与 action 同生命周期）。
+pub(crate) struct JobState {
+    pub gate: crate::gate::UnlockGate,
+    pub device: Option<crate::jobs::DeviceJob>,
+    pub cancel: crate::jobs::CancelFlag,
+    pub action: Option<crate::gate::ActionId>,
+}
+
+/// i18n 重放域：语言切换后按新语言重放的动态呈现缓存。
+pub(crate) struct ReplayState {
+    pub last_outcome: Option<StoredOutcome>,
+    pub last_hit: Option<crate::jobs::ScanHit>,
+}
+
+/// 对话框域：打开中的对话框弱引用（语言切换联动刷新）。
+#[derive(Default)]
+pub(crate) struct DialogRefs {
+    pub password: Option<gtk::glib::WeakRef<PasswordDialog>>,
+    pub environment: Option<gtk::glib::WeakRef<EnvironmentDialog>>,
+}
+
+/// 环境域：状态机当前态 + 一次性纪律标志（§4.13，environment_flow 消费）。
+#[derive(Default)]
+pub(crate) struct EnvState {
+    pub state: crate::environment::EnvironmentState,
+    pub autos: crate::environment::AutoAttempts,
+}
+
+/// 外壳控件集：顶栏（窗口单元自有，非页面）。
+pub(crate) struct HeaderBarWidgets {
+    pub sidebar_toggle: gtk::ToggleButton,
+    pub action_preferences: gtk::Button,
+    pub environment_pill: gtk::Button,
+    pub window_title: adw::WindowTitle,
+}
+
+/// 外壳控件集：侧边栏品牌与导航。
+pub(crate) struct SidebarWidgets {
+    pub title: gtk::Label,
+    pub list: gtk::ListBox,
+    pub labels: Vec<gtk::Label>,
+}
+```
+
+全部 `self.state().borrow…` 访问点（约 30 处，含 environment_flow.rs / dashboard.rs 等已迁出文件）按域改写：环境域 `self.imp().env.borrow_mut().state/autos`、作业域 `self.imp().job.borrow_mut().gate/device/…`、重放域 `self.imp().replay.borrow_mut().last_hit/…`。测试中的 `imp.environment_pill` → `imp.header.environment_pill`、`imp.nav_list` → `imp.sidebar.list` 等同步。
+
+- [ ] **Step 2: 接线归位**
+
+1. `password_dialog.rs` 新增 `pub fn connect_submit(&self, f: impl Fn(magi_protocol::Password) + 'static)`：提交按钮点击、空口令就地提示、`take_password` 取值与 zeroize 语义全部在对话框内闭合；`main_window::prompt_password` 收敛为「复位闸门 → 建对话框 → 注册弱引用 → `connect_submit(start_job 闭包)`」四步（作业启动逻辑留 main_window）。
+2. `apply_theme` 自 `ui/mod.rs` 移入 `settings.rs`（消费 `Settings` 的域）；`ui/mod.rs` 只留模块声明与导出；`lib.rs` 的 `connect_startup` 改 `settings::apply_theme(&settings)`。
+
+- [ ] **Step 3: 全量测试（行为零变化验证）**
+
+Run: `cargo test -p magi-app 2>&1 | grep -E 'test result|error' | head -5`
+Expected: PASS，测试数量与 T4 完成时一致。
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add -A crates/magi-app/src
+git commit -S -m "refactor: WindowState 分域 + 外壳子结构体 + 对话框接线归位（D29 到底）
+
+- imp 改持五个独立域 RefCell（rescan/job/replay/dialogs/env），不变量各归其域，
+  消除单结构八类混装与散布 30 处的整结构 borrow
+- 顶栏/侧边栏组 HeaderBarWidgets/SidebarWidgets，imp 只剩外壳+页结构体+域
+- 口令对话框提交流程（空口令提示/取值/zeroize）闭合进 password_dialog；
+  apply_theme 归位 settings；main_window 收敛至 ~900 行纯外壳+路由"
+```
+
+---
 ### Task 5: jobs.rs 事件路由改窗口自持 Receiver
 
 **Files:**
@@ -550,12 +641,11 @@ main_window 收敛为窗口骨架/装配/路由/作业与口令流程（约 -600
 ### Task 11: issues 登记收尾
 
 **Files:**
-- Create: `docs/specs/t7-magician/issues/2026-09-21-WindowState分域.md`（UR14：八类关注点仍在一个 RefCell 结构，页面拆分后字段已可自然分域，登记后续）
-- Create: `docs/specs/t7-magician/issues/2026-09-21-locales键风格统一.md`（UR15：11 个 PascalCase 呈现码键与功能键双风格混排，统一 `error.` 子树需动 presentation.rs 常量表）
+- Create: `docs/specs/t7-magician/issues/2026-09-21-locales键风格统一.md`（UR15：11 个 PascalCase 呈现码键与功能键双风格混排，统一 `error.` 子树需动 presentation.rs 常量表与两份 locale）
 
-（原「页面拆分」「controller 拆分」两项已由本计划 Task 2/4 完成，不再登记。）
+（原「页面拆分」「controller 拆分」「WindowState 分域」三项已由 Task 2/4/4b 完成，不再登记。）
 
-- [ ] Steps: 按 issues/README 骨架写两文件（open 状态 + 证据行号 + 重构方向）→ 提交 `docs: 登记两项后续重构 issue（WindowState 分域/locales 键风格）`（GPG）。
+- [ ] Steps: 按 issues/README 骨架写文件（open 状态 + 证据行号 + 重构方向）→ 提交 `docs: 登记后续重构 issue（locales 键风格统一）`（GPG）。
 
 ---
 
