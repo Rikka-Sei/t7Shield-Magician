@@ -457,17 +457,38 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.sidebar.title.set_label(&t!("app.title"));
-        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
-            label.set_label(&t!(item.label_key()));
-        }
+        self.apply_static_texts();
+        // 启动路径补 About 页平台说明（T6 评审 P2：start() 不再经 refresh_devices，
+        // 该行失去唯一启动初始化；纯 i18n 文案赋值，无首帧成本）。
+        self.show_platform_notice();
         imp.content_stack
             .set_visible_child_name(NavItem::Dashboard.page_name());
         // 初始选中第一项：选中态由 GtkListBox 原生机制维护（此时导航回调尚未接线，
         // 不会重入 show_page；页面可见性已由上一行直接设置）。
         if let Some(row) = imp.sidebar.list.row_at_index(0) {
             imp.sidebar.list.select_row(Some(&row));
+        }
+        // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
+        // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
+        // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
+        imp.split_view
+            .bind_property("show-sidebar", &imp.header.sidebar_toggle, "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+        self.hide_outcome();
+        self.show_unknown_device();
+        self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
+    }
+
+    /// 静态文案装配单点：setup 与 relocalize 共用的全部静态 i18n 行在此一次登记。
+    /// 版本号为编译期常量、与语言无关，relocalize 重复赋值同值无副作用。
+    fn apply_static_texts(&self) {
+        let imp = self.imp();
+        imp.sidebar.title.set_label(&t!("app.title"));
+        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
+        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
+            label.set_label(&t!(item.label_key()));
         }
         imp.dashboard.device_group.set_title(&t!("device.group_title"));
         imp.dashboard.actions_group.set_title(&t!("dashboard.actions_title"));
@@ -512,17 +533,6 @@ impl MainWindow {
             .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
         imp.header.sidebar_toggle
             .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
-        // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
-        // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
-        // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
-        imp.split_view
-            .bind_property("show-sidebar", &imp.header.sidebar_toggle, "active")
-            .bidirectional()
-            .sync_create()
-            .build();
-        self.hide_outcome();
-        self.show_unknown_device();
-        self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
     }
 
     /// 入口接线（§4.12/§4.11/§6）。
@@ -724,14 +734,9 @@ impl MainWindow {
         match action {
             ActionId::Unlock | ActionId::ValidatePassword => self.prompt_password(action),
             // §4.11：写口令入口受证据缺口约束；程序化触发也必须立即返回、不下发任何命令。
-            ActionId::SetPassword | ActionId::ChangePassword => {
-                self.show_error(&AppError::from(
-                    magi_protocol::set_password(&[]).expect_err("口令写操作不可执行"),
-                ));
-            }
-            ActionId::DeletePassword => {
-                self.show_error(&AppError::from(
-                    magi_protocol::delete_password(&[]).expect_err("口令写操作不可执行"),
+            ActionId::SetPassword | ActionId::ChangePassword | ActionId::DeletePassword => {
+                self.show_error(&AppError::Protocol(
+                    magi_protocol::ProtocolError::PasswordOperationUnspecified,
                 ));
             }
         }
@@ -884,52 +889,7 @@ impl MainWindow {
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.sidebar.title.set_label(&t!("app.title"));
-        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
-            label.set_label(&t!(item.label_key()));
-        }
-        imp.dashboard.device_group.set_title(&t!("device.group_title"));
-        imp.dashboard.actions_group.set_title(&t!("dashboard.actions_title"));
-        imp.dashboard.actions_group
-            .set_description(Some(&t!("reason.evidence_gap")));
-        imp.dashboard.feedback_group
-            .set_title(&t!("dashboard.feedback_title"));
-        imp.dashboard.node_row.set_title(&t!("device.node"));
-        imp.dashboard.channel_row.set_title(&t!("device.channel_title"));
-        imp.dashboard.descriptor_row.set_title(&t!("device.descriptor_title"));
-        imp.diagnostics.diagnostics_group
-            .set_title(&t!("diagnostics.view_title"));
-        imp.diagnostics.diagnostics_group
-            .set_description(Some(&t!("diagnostics.hint")));
-        imp.about.about_group.set_title(&t!(NavItem::About.label_key()));
-        imp.about.about_group
-            .set_description(Some(&t!("about.notice")));
-        imp.about.about_version_row.set_title(&t!("about.version_title"));
-        imp.about.about_device_row.set_title(&t!("about.device_title"));
-        imp.about.about_repository_row
-            .set_title(&t!("about.repository_title"));
-        imp.about.platform_group
-            .set_title(&t!("about.platform_title"));
-        imp.about.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
-        imp.about.about_repository_row
-            .set_subtitle(t!("about.repository").as_ref());
-        for action in ActionId::ALL {
-            if let Some(row) = self.action_row(action) {
-                row.set_title(&t!(action.label_key()));
-            }
-        }
-        imp.diagnostics.action_export_diagnostics
-            .set_title(&t!("action.export_diagnostics"));
-        imp.dashboard.action_cancel.set_label(&t!("action.cancel"));
-        imp.header.action_preferences
-            .set_tooltip_text(Some(&t!("action.preferences")));
-        imp.header.environment_pill
-            .set_label(&t!("environment.pill_label"));
-        imp.header.environment_pill
-            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
-        imp.header.sidebar_toggle
-            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
+        self.apply_static_texts();
         // 设备分组重放：有缓存命中按新语言重渲染（不走 refresh_devices——
         // RescanState 身份不变时返回 Keep，不会重刷文案）。
         let last_hit = self.imp().replay.borrow().last_hit.clone();
