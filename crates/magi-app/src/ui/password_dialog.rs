@@ -17,7 +17,7 @@ use libadwaita as adw;
 use magi_protocol::Password;
 use rust_i18n::t;
 
-use crate::controller::{self, ActionId};
+use crate::device::gate::{self, ActionId};
 use crate::presentation::AppError;
 
 mod imp {
@@ -169,7 +169,7 @@ impl PasswordDialog {
     /// 不构造任何报文）；成功时立即清空输入框内的副本并返回零化缓冲。
     pub fn take_password(&self) -> Result<Password, AppError> {
         let text = self.imp().entry.text();
-        let password = controller::validate_password_input(text.as_str())?;
+        let password = gate::validate_password_input(text.as_str())?;
         // 提交后不再保留 UI 侧的口令副本（GTK 内部的条目缓冲立即被空串覆盖）。
         self.imp().entry.set_text("");
         self.imp().error_label.set_label("");
@@ -213,7 +213,7 @@ mod tests {
             response_frame(comid, &[0xfa]),
         ]);
 
-        let mut password = controller::validate_password_input(SECRET).expect("非空口令");
+        let mut password = gate::validate_password_input(SECRET).expect("非空口令");
         let buffer = password.expose();
         let pointer = buffer.as_ptr();
         let length = buffer.len();
@@ -271,7 +271,7 @@ mod tests {
             &start_session_body_rejected(),
         )]);
 
-        let mut password = controller::validate_password_input(SECRET).expect("非空口令");
+        let mut password = gate::validate_password_input(SECRET).expect("非空口令");
         let outcome =
             run_validate_password(&transport, comid, &mut password).expect("收发必须成功");
         assert!(!outcome.accepted);

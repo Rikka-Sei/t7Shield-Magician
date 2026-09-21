@@ -14,7 +14,7 @@
 //! 主流程（§4.13）：启动即扫描设备 → 更新设备分组/状态徽章/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
 //! 设备热插拔（§4.1 REQ-001）：工作线程周期重扫，经 MainContext channel 回主线程，
-//! 由重扫状态机（[`crate::controller::RescanState`]）统一裁决设备分组与入口更新。
+//! 由重扫状态机（[`crate::device::rescan::RescanState`]）统一裁决设备分组与入口更新。
 
 use std::cell::RefCell;
 
@@ -27,10 +27,11 @@ use libadwaita as adw;
 use magi_protocol::{Password, UnlockEvidence, UnlockStep};
 use rust_i18n::t;
 
-use crate::controller::{ActionId, DeviceIdentity, RescanAction, RescanState, UnlockGate};
 use crate::diagnostics::{self, Level};
 use crate::device::environment::{self, EnvironmentEvent, EnvironmentState};
-use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
+use crate::device::gate::{ActionId, UnlockGate};
+use crate::device::jobs::{self, CancelFlag, DeviceJob, ScanHit};
+use crate::device::rescan::{DeviceIdentity, RescanAction, RescanState};
 use crate::ui::environment_dialog::EnvironmentDialog;
 use crate::ui::password_dialog::PasswordDialog;
 use crate::presentation::{self, AppError, AppEvent};

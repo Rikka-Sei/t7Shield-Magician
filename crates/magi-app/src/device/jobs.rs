@@ -1,30 +1,175 @@
 //! §4.13 线程模型：工作线程 + channel + `AppEvent` 投递。
 //!
 //! - 协议 I/O 一律在工作线程执行，UI 主线程只做事件消费（§6：主线程单帧阻塞 ≤ 100 ms）；
-//! - 同设备同时最多 1 个在飞作业（复用 [`crate::controller::JobRegistry`]；命令队列上限 1，
+//! - 同设备同时最多 1 个在飞作业（复用 [`JobRegistry`]；命令队列上限 1，
 //!   溢出即拒绝，不排队）；
 //! - 事件经 `async_channel` 回到主线程的 `glib::MainContext`，再由主窗口注册的事件汇消费。
 //!
 //! 事件汇是线程局部的：它捕获的是 glib 控件（`Send` 不成立），只允许在主线程注册与调用。
 
 use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_channel::Receiver;
 use gtk4::glib;
 use magi_protocol::{
-    run_unlock, run_validate_password, DeviceState, Password, ProgressReporter, UnlockEvidence,
-    UnlockStep, VENDOR_ID,
+    run_unlock, run_validate_password, DeviceState, Discovery, Password, ProgressReporter,
+    RunError, UnlockEvidence, UnlockStep, VENDOR_ID,
 };
 use magi_transport::transport::{DeviceTarget, Transport, TransportError};
 use magi_transport::usb_descriptor::UsbDescriptorSummary;
 use rust_i18n::t;
 
-use crate::controller::{self, DeviceId, DeviceIdentity, JobRegistry};
+use crate::device::rescan::{clamp_devices, DeviceIdentity};
 use crate::presentation::{AppError, AppEvent};
+
+/// 设备稳定标识（Linux 上是 `/dev/sgN`）。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DeviceId(String);
+
+impl DeviceId {
+    /// 由字符串构造（调用方保证同一设备每次得到相同取值）。
+    pub fn new(id: impl Into<String>) -> Self {
+        DeviceId(id.into())
+    }
+
+    /// 原始标识。
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DeviceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// §6 单飞注册表：每设备同时最多 1 个在飞操作；命令队列上限 1（溢出即拒绝，不排队）。
+#[derive(Debug, Default)]
+pub struct JobRegistry {
+    in_flight: Mutex<HashSet<DeviceId>>,
+}
+
+impl JobRegistry {
+    /// 空注册表。
+    pub fn new() -> Self {
+        JobRegistry {
+            in_flight: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// 尝试为 `dev` 占位：已有在飞操作 → `AppError::Busy`（§4.13）。
+    pub fn try_begin(&self, dev: &DeviceId) -> Result<JobGuard<'_>, AppError> {
+        let mut in_flight = self.in_flight.lock().unwrap_or_else(|err| err.into_inner());
+        if in_flight.contains(dev) {
+            return Err(AppError::Busy);
+        }
+        in_flight.insert(dev.clone());
+        Ok(JobGuard {
+            dev: dev.clone(),
+            registry: self,
+        })
+    }
+
+    /// 当前在飞设备数。
+    pub fn in_flight(&self) -> usize {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .len()
+    }
+}
+
+/// 在飞作业守卫：`Drop` 释放单飞槽位（成功、失败与取消路径都必须释放）。
+#[derive(Debug)]
+pub struct JobGuard<'a> {
+    dev: DeviceId,
+    registry: &'a JobRegistry,
+}
+
+impl JobGuard<'_> {
+    /// 本守卫对应的设备标识。
+    pub fn device(&self) -> &DeviceId {
+        &self.dev
+    }
+}
+
+impl Drop for JobGuard<'_> {
+    fn drop(&mut self) {
+        self.registry
+            .in_flight
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(&self.dev);
+    }
+}
+
+/// 作业起步阶段的错误：身份未识别，或首个协议交互失败。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationStartError {
+    /// 未识别为 T7 Shield（§4.1）：不打开通道、不下发命令。
+    DeviceNotRecognized,
+    /// 首个协议交互失败（与 `AppError` 同源，可直接进入呈现码表）。
+    App(AppError),
+}
+
+impl OperationStartError {
+    /// 失败原因文案键（未识别设备用设备卡状态键）。
+    pub fn reason_key(&self) -> &'static str {
+        match self {
+            OperationStartError::DeviceNotRecognized => "status.unrecognized",
+            OperationStartError::App(err) => crate::presentation::reason_key(err),
+        }
+    }
+}
+
+impl From<TransportError> for OperationStartError {
+    fn from(err: TransportError) -> Self {
+        OperationStartError::App(AppError::Transport(err))
+    }
+}
+
+impl From<RunError> for OperationStartError {
+    fn from(err: RunError) -> Self {
+        OperationStartError::App(err.into())
+    }
+}
+
+impl From<OperationStartError> for AppError {
+    fn from(err: OperationStartError) -> Self {
+        match err {
+            OperationStartError::App(err) => err,
+            // 界面只对已识别设备入队（`jobs::hit_from_usb` 过滤非目标 PID），此处是兜底：
+            // 「未识别」在协议层的等价事实是该设备不提供 Opal SSC 通道（§5）。
+            OperationStartError::DeviceNotRecognized => {
+                AppError::Protocol(magi_protocol::ProtocolError::NoOpalSscDescriptor)
+            }
+        }
+    }
+}
+
+/// 作业第一步（§4.1/§4.2）：先按身份裁决，再做 Level-0 Discovery。
+///
+/// 未识别身份立即返回，**不打开传输通道**，因此不会下发任何命令；识别成功时返回已打开的
+/// 传输通道（供本作业后续的会话命令复用）与运行时解析出的 [`Discovery`]。
+pub fn open_and_discover<T: Transport>(
+    identity: DeviceIdentity,
+    target: &DeviceTarget,
+) -> Result<(T, Discovery), OperationStartError> {
+    if identity == DeviceIdentity::Unrecognized {
+        return Err(OperationStartError::DeviceNotRecognized);
+    }
+    let transport = T::open(target)?;
+    let discovery = magi_protocol::discover(&transport)?;
+    Ok((transport, discovery))
+}
+
 
 /// 全局单飞注册表：每设备 1 个工作线程（§6）。
 static REGISTRY: LazyLock<JobRegistry> = LazyLock::new(JobRegistry::new);
@@ -198,7 +343,7 @@ pub struct ScanOutcome {
 pub fn fetch_scan() -> ScanOutcome {
     match scan_devices() {
         Ok(hits) => {
-            let (hits, limit_key) = controller::clamp_devices(hits);
+            let (hits, limit_key) = clamp_devices(hits);
             if let Some(key) = limit_key {
                 // §6：同时受理设备上限 8 个，超出部分不呈现并给出提示。
                 crate::diagnostics::ring().record(crate::diagnostics::Level::Warn, key);
@@ -313,7 +458,7 @@ pub fn unlock_device(
 ) -> Result<Option<UnlockEvidence>, AppError> {
     let mut password = password;
     let (transport, discovery) =
-        controller::open_and_discover::<DiagnosticsTransport>(job.identity, &job.target)?;
+        open_and_discover::<DiagnosticsTransport>(job.identity, &job.target)?;
     let flags_before = discovery.locking.raw;
 
     let probe = cancel.probe();
@@ -360,7 +505,7 @@ pub fn validate_password(
     let mut password = password;
     let _ = emit;
     let (transport, discovery) =
-        controller::open_and_discover::<DiagnosticsTransport>(job.identity, &job.target)?;
+        open_and_discover::<DiagnosticsTransport>(job.identity, &job.target)?;
     let outcome = run_validate_password(&transport, discovery.base_comid, &mut password)
         .map_err(AppError::from)?;
     if !outcome.accepted {
@@ -402,9 +547,10 @@ pub fn identity_for_state(state: Option<DeviceState>) -> DeviceIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::DeviceIdentity;
+    use crate::device::gate::allowed_actions;
+    use crate::device::rescan::DeviceIdentity;
     use crate::test_support::{response_frame, FakeTransport, START_SESSION_BODY_ACCEPTED};
-    use magi_protocol::{UnlockStep, PID_LOCKED, PID_UNLOCKED};
+    use magi_protocol::{identify_device, UnlockStep, PID_LOCKED, PID_UNLOCKED};
 
     /// 扫描命中映射（§4.1）：两个目标 PID 各归其态，其它 PID 不入列。
     #[test]
@@ -441,7 +587,7 @@ mod tests {
         ]);
         let ring = crate::diagnostics::ring();
         let transport = crate::diagnostics::RecordingTransport::new(inner, Arc::clone(&ring));
-        let mut password = crate::controller::validate_password_input("secret").expect("非空口令");
+        let mut password = crate::device::gate::validate_password_input("secret").expect("非空口令");
         let mut reporter = EventReporter { emit: &|_event| {} };
         // 先置位取消：StartSession 之前的最后一次 cancel() 检查会立即返回，只留下已建立的会话。
         cancel_for_job.cancel();
@@ -520,4 +666,93 @@ mod tests {
         );
         handle.join().expect("工作线程必须正常结束");
     }
+
+    /// 锚点（§10）：非目标 PID 被拒绝且不下发命令。
+    #[test]
+    fn test_unknown_pid_is_rejected() {
+        assert_eq!(
+            identify_device(VENDOR_ID, PID_LOCKED),
+            Some(DeviceState::Locked)
+        );
+        assert_eq!(
+            DeviceIdentity::from_ids(VENDOR_ID, 0x61ff),
+            DeviceIdentity::Unrecognized
+        );
+        assert_eq!(
+            DeviceIdentity::from_ids(0x1234, PID_LOCKED),
+            DeviceIdentity::Unrecognized
+        );
+        assert!(allowed_actions(None).iter().all(|(_, enabled)| !enabled));
+
+        // 未识别设备：`open_and_discover` 立即返回，传输通道的 `open` 一次都没被调用。
+        CountingTransport::reset();
+        let target = DeviceTarget::LinuxSg("/dev/sg0".to_string());
+        let err = open_and_discover::<CountingTransport>(DeviceIdentity::Unrecognized, &target)
+            .expect_err("未识别设备必须被拒绝");
+        assert_eq!(err, OperationStartError::DeviceNotRecognized);
+        assert_eq!(CountingTransport::open_count(), 0);
+        assert_eq!(err.reason_key(), "status.unrecognized");
+    }
+
+    /// 锚点（§10）：单飞约束下的忙错误。
+    #[test]
+    fn test_duplicate_trigger_is_busy() {
+        let registry = JobRegistry::new();
+        let dev = DeviceId::new("/dev/sg0");
+        let other = DeviceId::new("/dev/sg1");
+
+        let guard = registry.try_begin(&dev).expect("首次占位必须成功");
+        assert_eq!(
+            registry
+                .try_begin(&dev)
+                .expect_err("同设备第二次占位必须失败"),
+            AppError::Busy
+        );
+        assert_eq!(registry.in_flight(), 1);
+
+        // 不同设备可并行。
+        let other_guard = registry.try_begin(&other).expect("不同设备必须可占位");
+        assert_eq!(registry.in_flight(), 2);
+        drop(other_guard);
+        assert_eq!(registry.in_flight(), 1);
+
+        // 守卫释放后可再次占位。
+        drop(guard);
+        assert_eq!(registry.in_flight(), 0);
+        assert!(registry.try_begin(&dev).is_ok());
+    }
+
+    /// 计数型假传输：只统计 `open` 次数（未识别设备下 `execute` 不会到达）。
+    #[derive(Debug)]
+    struct CountingTransport;
+
+    static OPEN_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    impl CountingTransport {
+        fn reset() {
+            OPEN_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn open_count() -> usize {
+            OPEN_COUNT.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Transport for CountingTransport {
+        fn open(_target: &DeviceTarget) -> Result<Self, TransportError> {
+            OPEN_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(CountingTransport)
+        }
+
+        fn execute(
+            &self,
+            _cdb: &magi_transport::transport::ScsiCdb,
+            _dir: magi_transport::transport::Direction,
+            _data: &mut [u8],
+            _timeout: Duration,
+        ) -> Result<usize, TransportError> {
+            Err(TransportError::Unavailable)
+        }
+    }
+
 }

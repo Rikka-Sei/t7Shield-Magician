@@ -353,7 +353,7 @@ mod tests {
             response_frame(comid, &[0xfa]),
         ]);
         let transport = RecordingTransport::new(inner, Arc::clone(&owned));
-        let mut password = crate::controller::validate_password_input(SECRET).expect("非空口令");
+        let mut password = crate::device::gate::validate_password_input(SECRET).expect("非空口令");
         run_validate_password(&transport, comid, &mut password).expect("收发必须成功");
 
         let export = owned.export_redacted();

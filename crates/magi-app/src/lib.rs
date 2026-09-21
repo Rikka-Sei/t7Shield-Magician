@@ -11,22 +11,16 @@
 //! （K6）；`main.rs` 只负责把控制权交给 [`run`]。
 //!
 //! UI 分层（D29）：界面代码集中在 [`ui`] 子模块（一个窗口 / 对话框一个文件，全部由 Rust 代码
-//! 构建 libadwaita 原生组件）；状态机、作业、诊断、呈现码与设置持久化留在 crate 根模块。
+//! 构建 libadwaita 原生组件）；状态机与作业等设备域逻辑收进 [`device`]，诊断、呈现码与设置持久化留在 crate 根模块。
 
 // §6 国际化：编译期内嵌 locales/*.yml，默认 zh-CN、提供 en。
 rust_i18n::i18n!("locales", fallback = "zh-CN");
 
-/// 入口启用矩阵、单飞约束、口令输入校验与设备身份准入（纯逻辑，无 GTK）。
-pub mod controller;
-
 /// 内存环形缓冲（512 条）+ 脱敏导出（§6「合规与保留」）。
 pub mod diagnostics;
 
-/// 设备域纯逻辑（D34）：环境就绪状态机、重枚举观察等单一关注点模块，收进域目录。
+/// 设备域模块（D34）：环境就绪、入口闸门、重扫呈现与作业编排等单一关注点模块，收进域目录。
 pub mod device;
-
-/// 工作线程 + channel + `AppEvent` 投递（`spawn_device_job`）。
-pub mod jobs;
 
 /// `AppError` → 呈现码映射与文案键（§4.13 表）。
 pub mod presentation;
