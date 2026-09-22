@@ -17,7 +17,7 @@ use libadwaita as adw;
 use magi_protocol::Password;
 use rust_i18n::t;
 
-use crate::controller::{self, ActionId};
+use crate::device::gate::{self, ActionId};
 use crate::presentation::AppError;
 
 mod imp {
@@ -141,7 +141,36 @@ impl PasswordDialog {
         dialog.imp().action.set(action);
         dialog.relocalize();
         dialog.imp().error_label.set_label("");
+        // 取消接线归位（D29）：对话框自己关自己，不劳调用方。
+        dialog.cancel_button().connect_clicked(glib::clone!(
+            #[weak(rename_to = cancel_dialog)]
+            dialog,
+            move |_| {
+                cancel_dialog.close();
+            }
+        ));
         dialog
+    }
+
+    /// 提交接线（D29 归位）：空口令就地提示、取值、关闭对话框；成功取到的口令
+    /// 交给 `f`（作业启动由调用方接管；§4.12 提交即清零在 take_password 内闭合）。
+    pub fn connect_submit(&self, f: impl Fn(Password) + 'static) {
+        self.submit_button().connect_clicked(glib::clone!(
+            #[weak(rename_to = submit_dialog)]
+            self,
+            move |_| {
+                let password = match submit_dialog.take_password() {
+                    Ok(password) => password,
+                    Err(error) => {
+                        // §4.12：空口令就地提示、对话框保持打开、不构造任何报文。
+                        submit_dialog.show_error(&error);
+                        return;
+                    }
+                };
+                submit_dialog.close();
+                f(password);
+            }
+        ));
     }
 
     /// 主按钮（返回输入框焦点前的最终动作由调用方接线）。
@@ -169,7 +198,7 @@ impl PasswordDialog {
     /// 不构造任何报文）；成功时立即清空输入框内的副本并返回零化缓冲。
     pub fn take_password(&self) -> Result<Password, AppError> {
         let text = self.imp().entry.text();
-        let password = controller::validate_password_input(text.as_str())?;
+        let password = gate::validate_password_input(text.as_str())?;
         // 提交后不再保留 UI 侧的口令副本（GTK 内部的条目缓冲立即被空串覆盖）。
         self.imp().entry.set_text("");
         self.imp().error_label.set_label("");
@@ -213,7 +242,7 @@ mod tests {
             response_frame(comid, &[0xfa]),
         ]);
 
-        let mut password = controller::validate_password_input(SECRET).expect("非空口令");
+        let mut password = gate::validate_password_input(SECRET).expect("非空口令");
         let buffer = password.expose();
         let pointer = buffer.as_ptr();
         let length = buffer.len();
@@ -271,7 +300,7 @@ mod tests {
             &start_session_body_rejected(),
         )]);
 
-        let mut password = controller::validate_password_input(SECRET).expect("非空口令");
+        let mut password = gate::validate_password_input(SECRET).expect("非空口令");
         let outcome =
             run_validate_password(&transport, comid, &mut password).expect("收发必须成功");
         assert!(!outcome.accepted);

@@ -9,8 +9,10 @@
 
 use std::fmt;
 
-use magi_protocol::{ProtocolError, RunError, UnlockEvidence, UnlockStep};
+use magi_protocol::{DeviceState, ProtocolError, RunError, UnlockEvidence, UnlockStep};
 use magi_transport::transport::TransportError;
+
+use crate::device::gate::{allowed_actions, ActionId};
 
 /// 呈现码 `Busy`（§4.13）。
 pub const CODE_BUSY: &str = "Busy";
@@ -227,6 +229,28 @@ pub fn locale_for_tag(tag: Option<&str>) -> &'static str {
     }
 }
 
+/// 平台说明（D27：运行目标平台为仅 Linux）：入口可用性交由设备态矩阵裁决，
+/// 文案键指向 Linux 通道说明。
+pub fn platform_notice() -> PlatformNotice {
+    PlatformNotice {
+        actions: allowed_actions(Some(DeviceState::Locked)),
+        code: None,
+        message_key: "platform.linux_notice",
+    }
+}
+
+/// 平台说明：入口可用性、限制呈现码、平台文案键。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformNotice {
+    /// 入口可用性（每个入口一项）。
+    pub actions: Vec<(ActionId, bool)>,
+    /// 平台限制对应的呈现码；无限制时为 `None`。
+    pub code: Option<&'static str>,
+    /// 平台说明文案键（始终存在）。
+    pub message_key: &'static str,
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,4 +414,20 @@ mod tests {
         }
         keys
     }
+
+    /// 平台说明（D27：仅 Linux）：解锁/校验按锁定态矩阵可用，口令写入口恒禁用。
+    #[test]
+    fn test_platform_notice_linux_matrix() {
+        let notice = platform_notice();
+        assert_eq!(notice.code, None);
+        assert_eq!(notice.message_key, "platform.linux_notice");
+        let enabled: Vec<ActionId> = notice
+            .actions
+            .iter()
+            .filter(|(_, enabled)| *enabled)
+            .map(|(action, _)| *action)
+            .collect();
+        assert_eq!(enabled, vec![ActionId::Unlock, ActionId::ValidatePassword]);
+    }
+
 }

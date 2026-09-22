@@ -1,7 +1,7 @@
 //! D28 设置对话框（D29：界面由 Rust 代码构建，使用 libadwaita 原生组件）。
 //!
 //! 主题与语言两组三态选择（`AdwComboRow`），更改即时生效并持久化：
-//! - 主题 → [`crate::ui::apply_theme`]（`AdwStyleManager`）；
+//! - 主题 → [`crate::settings::apply_theme`]（`AdwStyleManager`）；
 //! - 语言 → `rust_i18n::set_locale` + 对话框自身与主窗口 `relocalize()`。
 //!
 //! 候选项文案经 `gtk::StringList` + `t!()` 在本模块构造（AC-015：不内联可显示字符串）。
@@ -192,7 +192,7 @@ impl SettingsDialog {
             }
             let mut settings = imp.settings.borrow_mut();
             settings.theme = theme_from_index(row.selected());
-            crate::ui::apply_theme(&settings);
+            crate::settings::apply_theme(&settings);
             settings.save();
         });
         let dialog = self.clone();

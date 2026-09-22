@@ -4,6 +4,10 @@
 //! `AdwOverlaySplitView`（侧边栏 = 挂内置 `.navigation-sidebar` 类的 `GtkListBox`；主区 =
 //! `GtkStack`，三页均为 `AdwPreferencesPage`）。
 //!
+//! 页面组织（D29 分文件）：三页的控件构建与页面级呈现分文件维护——[`crate::ui::dashboard`] /
+//! [`crate::ui::diagnostics_page`] / [`crate::ui::about_page`]；本文件保留窗口骨架、装配、
+//! 导航路由与作业/口令/环境编排。
+//!
 //! 仪表盘（D29）：设备分组（`AdwPreferencesGroup` + `AdwActionRow`：产品名 / VID:PID /
 //! 设备节点 / 传输通道 / USB 备用设置，锁定状态徽章置于设备行尾部）+ 操作分组
 //! （五个 `AdwButtonRow`）+ 进度与结果分组；诊断页 = 只读记录卡片 + 脱敏导出入口；
@@ -14,7 +18,7 @@
 //! 主流程（§4.13）：启动即扫描设备 → 更新设备分组/状态徽章/入口 → 用户触发 → 口令对话框 →
 //! 工作线程作业 → `AppEvent` 回主线程更新进度与结果；取消只停止后续步骤，不阻塞退出（§6）。
 //! 设备热插拔（§4.1 REQ-001）：工作线程周期重扫，经 MainContext channel 回主线程，
-//! 由重扫状态机（[`crate::controller::RescanState`]）统一裁决设备分组与入口更新。
+//! 由重扫状态机（[`crate::device::rescan::RescanState`]）统一裁决设备分组与入口更新。
 
 use std::cell::RefCell;
 
@@ -24,15 +28,19 @@ use gtk::glib;
 use gtk::subclass::prelude::*;
 use gtk4 as gtk;
 use libadwaita as adw;
-use magi_protocol::{Password, UnlockEvidence, UnlockStep};
+use magi_protocol::{Password, UnlockEvidence};
+#[cfg(test)]
+use magi_protocol::UnlockStep;
 use rust_i18n::t;
 
-use crate::controller::{ActionId, DeviceIdentity, RescanAction, RescanState, UnlockGate};
 use crate::diagnostics::{self, Level};
-use crate::environment::{
-    self, EnvironmentAction, EnvironmentEvent, EnvironmentState, next_environment_state,
-};
-use crate::jobs::{self, CancelFlag, DeviceJob, ScanHit};
+use crate::device::environment::{EnvironmentEvent, EnvironmentState};
+use crate::device::gate::{ActionId, UnlockGate};
+use crate::device::jobs::{self, CancelFlag, DeviceJob, ScanHit};
+use crate::device::rescan::{DeviceIdentity, RescanAction, RescanState};
+use crate::ui::about_page;
+use crate::ui::dashboard;
+use crate::ui::diagnostics_page;
 use crate::ui::environment_dialog::EnvironmentDialog;
 use crate::ui::password_dialog::PasswordDialog;
 use crate::presentation::{self, AppError, AppEvent};
@@ -133,7 +141,7 @@ pub(crate) fn result_kind(key: &str) -> Outcome {
 
 /// 结果区呈现的重放数据（relocalize 用）。
 #[derive(Debug, Clone)]
-enum StoredOutcome {
+pub(crate) enum StoredOutcome {
     /// 固定结果键。
     Result(&'static str),
     /// 已解锁并挂载（含挂载点参数）。
@@ -165,26 +173,50 @@ fn current_workarea() -> Option<(i32, i32)> {
     Some((geometry.width(), geometry.height()))
 }
 
+/// 作业编排域：单飞闸门、在飞设备/动作与取消标志（不变量：device 与 action 同生命周期）。
 #[derive(Debug, Default)]
-pub(crate) struct WindowState {
-    gate: UnlockGate,
-    device: Option<DeviceJob>,
-    cancel: CancelFlag,
-    action: Option<ActionId>,
-    /// 周期重扫状态机：呈现中身份、在位缓存与空态防抖计数。
-    rescan: RescanState,
-    /// 结果区重放缓存（语言切换后按新语言重放）。
-    last_outcome: Option<StoredOutcome>,
-    /// 最后一次设备扫描命中（relocalize 重放设备分组文案用；空态清除）。
-    last_hit: Option<ScanHit>,
-    /// 打开中的口令对话框（语言切换时同步重渲染）。
-    open_dialog: Option<glib::WeakRef<PasswordDialog>>,
-    /// 打开中的引导向导（环境状态迁移时刷新问题清单）。
-    open_environment_dialog: Option<glib::WeakRef<EnvironmentDialog>>,
-    /// 环境就绪状态机当前态（§4.13）。
-    environment: EnvironmentState,
-    /// 启动自动装载是否已用掉（§4.13 纪律：每次启动至多一次）。
-    auto_load_used: bool,
+pub(crate) struct JobState {
+    pub(crate) gate: UnlockGate,
+    pub(crate) device: Option<DeviceJob>,
+    pub(crate) cancel: CancelFlag,
+    pub(crate) action: Option<ActionId>,
+}
+
+/// i18n 重放域：语言切换后按新语言重放的动态呈现缓存（结果区与设备分组）。
+#[derive(Debug, Default)]
+pub(crate) struct ReplayState {
+    pub(crate) last_outcome: Option<StoredOutcome>,
+    /// 最后一次设备扫描命中（空态清除，与设备分组呈现同步）。
+    pub(crate) last_hit: Option<ScanHit>,
+}
+
+/// 对话框域：打开中的对话框弱引用（语言切换与环境迁移联动刷新，不阻止回收）。
+#[derive(Default)]
+pub(crate) struct DialogRefs {
+    pub(crate) password: Option<glib::WeakRef<PasswordDialog>>,
+    pub(crate) environment: Option<glib::WeakRef<EnvironmentDialog>>,
+}
+
+/// 环境域：状态机当前态与启动引导链一次性标志（§4.13/D33，environment_flow 消费）。
+#[derive(Default)]
+pub(crate) struct EnvState {
+    pub(crate) state: EnvironmentState,
+    pub(crate) autos: crate::device::environment::AutoAttempts,
+}
+
+/// 外壳控件集：顶栏（窗口单元自有，非页面；D29 分文件组织）。
+pub(crate) struct HeaderBarWidgets {
+    pub(crate) sidebar_toggle: gtk::ToggleButton,
+    pub(crate) action_preferences: gtk::Button,
+    pub(crate) environment_pill: gtk::Button,
+    pub(crate) window_title: adw::WindowTitle,
+}
+
+/// 外壳控件集：侧边栏品牌与导航。
+pub(crate) struct SidebarWidgets {
+    pub(crate) title: gtk::Label,
+    pub(crate) list: gtk::ListBox,
+    pub(crate) labels: Vec<gtk::Label>,
 }
 
 mod imp {
@@ -193,48 +225,18 @@ mod imp {
     /// 主窗口子件（D29）：全部在 Rust 侧构建，无 `.ui` 模板、无 `#[template_child]`。
     pub struct MainWindow {
         pub root: adw::ToolbarView,
-        pub sidebar_toggle: gtk::ToggleButton,
-        pub action_preferences: gtk::Button,
-        pub environment_pill: gtk::Button,
-        pub window_title: adw::WindowTitle,
-        pub sidebar_title: gtk::Label,
+        pub(crate) header: HeaderBarWidgets,
+        pub(crate) sidebar: SidebarWidgets,
         pub split_view: adw::OverlaySplitView,
-        pub nav_list: gtk::ListBox,
-        pub nav_labels: Vec<gtk::Label>,
         pub content_stack: gtk::Stack,
-        pub toast_overlay: adw::ToastOverlay,
-        pub platform_group: adw::PreferencesGroup,
-        pub platform_row: adw::ActionRow,
-        pub device_group: adw::PreferencesGroup,
-        pub device_row: adw::ActionRow,
-        pub device_icon: gtk::Image,
-        pub status_icon: gtk::Image,
-        pub status_label: gtk::Label,
-        pub badge_box: gtk::Box,
-        pub node_row: adw::ActionRow,
-        pub channel_row: adw::ActionRow,
-        pub descriptor_row: adw::ActionRow,
-        pub actions_group: adw::PreferencesGroup,
-        pub action_unlock: adw::ButtonRow,
-        pub action_validate_password: adw::ButtonRow,
-        pub action_set_password: adw::ButtonRow,
-        pub action_change_password: adw::ButtonRow,
-        pub action_delete_password: adw::ButtonRow,
-        pub feedback_group: adw::PreferencesGroup,
-        pub progress_box: gtk::Box,
-        pub progress: gtk::ProgressBar,
-        pub action_cancel: gtk::Button,
-        pub result_row: gtk::Box,
-        pub result_icon: gtk::Image,
-        pub result_label: gtk::Label,
-        pub diagnostics_group: adw::PreferencesGroup,
-        pub diagnostics_view: gtk::TextView,
-        pub action_export_diagnostics: adw::ButtonRow,
-        pub about_group: adw::PreferencesGroup,
-        pub about_version_row: adw::ActionRow,
-        pub about_device_row: adw::ActionRow,
-        pub about_repository_row: adw::ActionRow,
-        pub(crate) state: RefCell<WindowState>,
+        pub(crate) dashboard: dashboard::DashboardWidgets,
+        pub(crate) diagnostics: diagnostics_page::DiagnosticsWidgets,
+        pub(crate) about: about_page::AboutWidgets,
+        pub(crate) rescan: RefCell<RescanState>,
+        pub(crate) job: RefCell<JobState>,
+        pub(crate) replay: RefCell<ReplayState>,
+        pub(crate) dialogs: RefCell<DialogRefs>,
+        pub(crate) env: RefCell<EnvState>,
     }
 
     impl Default for MainWindow {
@@ -319,131 +321,18 @@ mod imp {
                 .vexpand(true)
                 .build();
 
-            // 仪表盘 · 设备分组：设备行（徽章在行尾）+ 三条信息行。
-            let device_icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
-            device_icon.set_pixel_size(32);
-            device_icon.add_css_class("dim-label");
-            let status_icon = gtk::Image::builder().pixel_size(16).build();
-            let status_label = gtk::Label::new(None);
-            status_label.add_css_class("heading");
-            let badge_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            badge_box.set_valign(gtk::Align::Center);
-            badge_box.append(&status_icon);
-            badge_box.append(&status_label);
+            // 仪表盘页（D29 分文件）：构建与设备分组呈现见 dashboard.rs；
+            // 页面根 = 包裹 PreferencesPage 的 ToastOverlay。
+            let (dash_root, dashboard) = dashboard::build();
+            content_stack.add_named(&dash_root, Some(NavItem::Dashboard.page_name()));
 
-            let device_row = adw::ActionRow::new();
-            device_row.add_prefix(&device_icon);
-            device_row.add_suffix(&badge_box);
+            // 诊断页（D29 分文件）：构建与刷新见 diagnostics_page.rs。
+            let (diag_root, diagnostics) = diagnostics_page::build();
+            content_stack.add_named(&diag_root, Some(NavItem::Diagnostics.page_name()));
 
-            let node_row = adw::ActionRow::new();
-            let channel_row = adw::ActionRow::new();
-            let descriptor_row = adw::ActionRow::new();
-
-            let device_group = adw::PreferencesGroup::new();
-            device_group.add(&device_row);
-            device_group.add(&node_row);
-            device_group.add(&channel_row);
-            device_group.add(&descriptor_row);
-
-            let dashboard_page = adw::PreferencesPage::new();
-            dashboard_page.add(&device_group);
-
-            // 仪表盘 · 操作分组：五个 AdwButtonRow（文案与敏感度在装配时装配）。
-            let actions_group = adw::PreferencesGroup::new();
-            let action_unlock = adw::ButtonRow::new();
-            action_unlock.set_start_icon_name(Some("system-lock-screen-symbolic"));
-            let action_validate_password = adw::ButtonRow::new();
-            action_validate_password.set_start_icon_name(Some("dialog-password-symbolic"));
-            let action_set_password = adw::ButtonRow::new();
-            action_set_password.set_start_icon_name(Some("document-new-symbolic"));
-            let action_change_password = adw::ButtonRow::new();
-            action_change_password.set_start_icon_name(Some("document-edit-symbolic"));
-            let action_delete_password = adw::ButtonRow::new();
-            action_delete_password.set_start_icon_name(Some("edit-delete-symbolic"));
-            actions_group.add(&action_unlock);
-            actions_group.add(&action_validate_password);
-            actions_group.add(&action_set_password);
-            actions_group.add(&action_change_password);
-            actions_group.add(&action_delete_password);
-            dashboard_page.add(&actions_group);
-
-            // 仪表盘 · 进度与结果分组。
-            let progress = gtk::ProgressBar::builder()
-                .hexpand(true)
-                .valign(gtk::Align::Center)
-                .build();
-            let action_cancel = gtk::Button::new();
-            let progress_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            progress_box.set_visible(false);
-            progress_box.append(&progress);
-            progress_box.append(&action_cancel);
-
-            let result_icon = gtk::Image::builder()
-                .pixel_size(16)
-                .valign(gtk::Align::Start)
-                .margin_top(2)
-                .visible(false)
-                .build();
-            let result_label = gtk::Label::builder()
-                .xalign(0.0)
-                .hexpand(true)
-                .wrap(true)
-                .build();
-            let result_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            result_row.set_visible(false);
-            result_row.append(&result_icon);
-            result_row.append(&result_label);
-
-            let feedback_group = adw::PreferencesGroup::new();
-            feedback_group.add(&progress_box);
-            feedback_group.add(&result_row);
-            dashboard_page.add(&feedback_group);
-
-            // Toast 承载层：成功结果的瞬时提示（libadwaita 特色，独立小步）。
-            let toast_overlay = adw::ToastOverlay::new();
-            toast_overlay.set_child(Some(&dashboard_page));
-            content_stack.add_named(&toast_overlay, Some(NavItem::Dashboard.page_name()));
-
-            // 诊断页：只读记录卡片 + 脱敏导出入口。
-            let diagnostics_view = gtk::TextView::builder()
-                .editable(false)
-                .cursor_visible(false)
-                .monospace(true)
-                .wrap_mode(gtk::WrapMode::WordChar)
-                .top_margin(12)
-                .bottom_margin(12)
-                .left_margin(12)
-                .right_margin(12)
-                .build();
-            let diagnostics_scroller = gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Never)
-                .min_content_height(240)
-                .child(&diagnostics_view)
-                .build();
-            diagnostics_scroller.add_css_class("card");
-            let action_export_diagnostics = adw::ButtonRow::new();
-            let diagnostics_group = adw::PreferencesGroup::new();
-            diagnostics_group.add(&diagnostics_scroller);
-            diagnostics_group.add(&action_export_diagnostics);
-            let diagnostics_page = adw::PreferencesPage::new();
-            diagnostics_page.add(&diagnostics_group);
-            content_stack.add_named(&diagnostics_page, Some(NavItem::Diagnostics.page_name()));
-
-            // 关于页：版本 / 支持设备 / 协议参考。
-            let about_version_row = adw::ActionRow::new();
-            let about_device_row = adw::ActionRow::new();
-            let about_repository_row = adw::ActionRow::new();
-            let about_group = adw::PreferencesGroup::new();
-            about_group.add(&about_version_row);
-            about_group.add(&about_device_row);
-            about_group.add(&about_repository_row);
-            let platform_row = adw::ActionRow::new();
-            let platform_group = adw::PreferencesGroup::new();
-            platform_group.add(&platform_row);
-            let about_page = adw::PreferencesPage::new();
-            about_page.add(&about_group);
-            about_page.add(&platform_group);
-            content_stack.add_named(&about_page, Some(NavItem::About.page_name()));
+            // 关于页（D29 分文件）：构建与平台说明见 about_page.rs。
+            let (about_root, about) = about_page::build();
+            content_stack.add_named(&about_root, Some(NavItem::About.page_name()));
 
             // —— 分栏视图与根容器 ——
             let split_view = adw::OverlaySplitView::builder()
@@ -459,48 +348,27 @@ mod imp {
 
             Self {
                 root,
-                sidebar_toggle,
-                action_preferences,
-                environment_pill,
-                window_title,
-                sidebar_title,
+                header: HeaderBarWidgets {
+                    sidebar_toggle,
+                    action_preferences,
+                    environment_pill,
+                    window_title,
+                },
+                sidebar: SidebarWidgets {
+                    title: sidebar_title,
+                    list: nav_list,
+                    labels: nav_labels,
+                },
                 split_view,
-                nav_list,
-                nav_labels,
                 content_stack,
-                toast_overlay,
-                platform_group,
-                platform_row,
-                device_group,
-                device_row,
-                device_icon,
-                status_icon,
-                status_label,
-                badge_box,
-                node_row,
-                channel_row,
-                descriptor_row,
-                actions_group,
-                action_unlock,
-                action_validate_password,
-                action_set_password,
-                action_change_password,
-                action_delete_password,
-                feedback_group,
-                progress_box,
-                progress,
-                action_cancel,
-                result_row,
-                result_icon,
-                result_label,
-                diagnostics_group,
-                diagnostics_view,
-                action_export_diagnostics,
-                about_group,
-                about_version_row,
-                about_device_row,
-                about_repository_row,
-                state: RefCell::new(WindowState::default()),
+                dashboard,
+                diagnostics,
+                about,
+                rescan: RefCell::new(RescanState::default()),
+                job: RefCell::new(JobState::default()),
+                replay: RefCell::new(ReplayState::default()),
+                dialogs: RefCell::new(DialogRefs::default()),
+                env: RefCell::new(EnvState::default()),
             }
         }
     }
@@ -578,13 +446,10 @@ impl MainWindow {
         });
     }
 
-    /// 启动装配（§4.13）：注册事件汇、接线入口、扫描设备并启动周期重扫监控。
+    /// 启动装配（§4.13）：接线入口并启动周期重扫监控；首轮扫描与环境自检由监控线程
+    /// 立即异步送达（先取数后休眠），启动路径不再同步扫描（§6：不阻塞首帧）。
     pub fn start(&self) {
-        let this = self.clone();
-        jobs::set_event_sink(move |event| this.on_event(event));
         self.connect_actions();
-        self.start_environment_bootstrap();
-        self.refresh_devices();
         self.refresh_actions();
         self.spawn_device_watch();
     }
@@ -592,72 +457,82 @@ impl MainWindow {
     /// 文案与初始状态（K5/AC-015：全部经 i18n 键赋值，代码内不内联可显示字符串）。
     fn setup(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_label(&t!("app.title"));
-        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
-            label.set_label(&t!(item.label_key()));
-        }
+        self.apply_static_texts();
+        // 启动路径补 About 页平台说明（T6 评审 P2：start() 不再经 refresh_devices，
+        // 该行失去唯一启动初始化；纯 i18n 文案赋值，无首帧成本）。
+        self.show_platform_notice();
         imp.content_stack
             .set_visible_child_name(NavItem::Dashboard.page_name());
         // 初始选中第一项：选中态由 GtkListBox 原生机制维护（此时导航回调尚未接线，
         // 不会重入 show_page；页面可见性已由上一行直接设置）。
-        if let Some(row) = imp.nav_list.row_at_index(0) {
-            imp.nav_list.select_row(Some(&row));
+        if let Some(row) = imp.sidebar.list.row_at_index(0) {
+            imp.sidebar.list.select_row(Some(&row));
         }
-        imp.device_group.set_title(&t!("device.group_title"));
-        imp.actions_group.set_title(&t!("dashboard.actions_title"));
-        imp.actions_group
-            .set_description(Some(&t!("reason.evidence_gap")));
-        imp.feedback_group
-            .set_title(&t!("dashboard.feedback_title"));
-        imp.node_row.set_title(&t!("device.node"));
-        imp.channel_row.set_title(&t!("device.channel_title"));
-        imp.descriptor_row.set_title(&t!("device.descriptor_title"));
-        imp.diagnostics_group
-            .set_title(&t!("diagnostics.view_title"));
-        imp.diagnostics_group
-            .set_description(Some(&t!("diagnostics.hint")));
-        imp.about_group.set_title(&t!(NavItem::About.label_key()));
-        imp.about_group
-            .set_description(Some(&t!("about.notice")));
-        imp.about_version_row.set_title(&t!("about.version_title"));
-        imp.about_device_row.set_title(&t!("about.device_title"));
-        imp.about_repository_row
-            .set_title(&t!("about.repository_title"));
-        imp.platform_group
-            .set_title(&t!("about.platform_title"));
-        imp.about_version_row
-            .set_subtitle(env!("CARGO_PKG_VERSION"));
-        imp.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
-        imp.about_repository_row
-            .set_subtitle(t!("about.repository").as_ref());
-        for action in ActionId::ALL {
-            if let Some(row) = self.action_row(action) {
-                row.set_title(&t!(action.label_key()));
-            }
-        }
-        imp.action_export_diagnostics
-            .set_title(&t!("action.export_diagnostics"));
-        imp.action_cancel.set_label(&t!("action.cancel"));
-        imp.action_preferences
-            .set_tooltip_text(Some(&t!("action.preferences")));
-        imp.environment_pill
-            .set_label(&t!("environment.pill_label"));
-        imp.environment_pill
-            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
-        imp.sidebar_toggle
-            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
         // 侧边栏开关常显：桌面宽度也应能收起侧边栏（ GNOME 应用惯例）。
         // 同步方向以 split_view 为源：初始 sync_create 把 show-sidebar(true) 推给
         // 开关的 active，避免以开关默认 false 反向把侧边栏在启动时关掉。
         imp.split_view
-            .bind_property("show-sidebar", &imp.sidebar_toggle, "active")
+            .bind_property("show-sidebar", &imp.header.sidebar_toggle, "active")
             .bidirectional()
             .sync_create()
             .build();
         self.hide_outcome();
         self.show_unknown_device();
         self.apply_actions(DeviceIdentity::Unrecognized, &UnlockGate::new());
+    }
+
+    /// 静态文案装配单点：setup 与 relocalize 共用的全部静态 i18n 行在此一次登记。
+    /// 版本号为编译期常量、与语言无关，relocalize 重复赋值同值无副作用。
+    fn apply_static_texts(&self) {
+        let imp = self.imp();
+        imp.sidebar.title.set_label(&t!("app.title"));
+        imp.header.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
+        for (label, item) in imp.sidebar.labels.iter().zip(NavItem::ALL) {
+            label.set_label(&t!(item.label_key()));
+        }
+        imp.dashboard.device_group.set_title(&t!("device.group_title"));
+        imp.dashboard.actions_group.set_title(&t!("dashboard.actions_title"));
+        imp.dashboard.actions_group
+            .set_description(Some(&t!("reason.evidence_gap")));
+        imp.dashboard.feedback_group
+            .set_title(&t!("dashboard.feedback_title"));
+        imp.dashboard.node_row.set_title(&t!("device.node"));
+        imp.dashboard.channel_row.set_title(&t!("device.channel_title"));
+        imp.dashboard.descriptor_row.set_title(&t!("device.descriptor_title"));
+        imp.diagnostics.diagnostics_group
+            .set_title(&t!("diagnostics.view_title"));
+        imp.diagnostics.diagnostics_group
+            .set_description(Some(&t!("diagnostics.hint")));
+        imp.about.about_group.set_title(&t!(NavItem::About.label_key()));
+        imp.about.about_group
+            .set_description(Some(&t!("about.notice")));
+        imp.about.about_version_row.set_title(&t!("about.version_title"));
+        imp.about.about_device_row.set_title(&t!("about.device_title"));
+        imp.about.about_repository_row
+            .set_title(&t!("about.repository_title"));
+        imp.about.platform_group
+            .set_title(&t!("about.platform_title"));
+        imp.about.about_version_row
+            .set_subtitle(env!("CARGO_PKG_VERSION"));
+        imp.about.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
+        imp.about.about_repository_row
+            .set_subtitle(t!("about.repository").as_ref());
+        for action in ActionId::ALL {
+            if let Some(row) = self.action_row(action) {
+                row.set_title(&t!(action.label_key()));
+            }
+        }
+        imp.diagnostics.action_export_diagnostics
+            .set_title(&t!("action.export_diagnostics"));
+        imp.dashboard.action_cancel.set_label(&t!("action.cancel"));
+        imp.header.action_preferences
+            .set_tooltip_text(Some(&t!("action.preferences")));
+        imp.header.environment_pill
+            .set_label(&t!("environment.pill_label"));
+        imp.header.environment_pill
+            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
+        imp.header.sidebar_toggle
+            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
     }
 
     /// 入口接线（§4.12/§4.11/§6）。
@@ -675,31 +550,31 @@ impl MainWindow {
             ));
         }
         let this = self.clone();
-        imp.action_cancel.connect_clicked(glib::clone!(
+        imp.dashboard.action_cancel.connect_clicked(glib::clone!(
             #[weak]
             this,
             move |_| this.cancel_current()
         ));
         let this = self.clone();
-        imp.action_export_diagnostics.connect_activated(glib::clone!(
+        imp.diagnostics.action_export_diagnostics.connect_activated(glib::clone!(
             #[weak]
             this,
             move |_| this.export_diagnostics()
         ));
         let this = self.clone();
-        imp.action_preferences.connect_clicked(glib::clone!(
+        imp.header.action_preferences.connect_clicked(glib::clone!(
             #[weak]
             this,
             move |_| this.present_preferences()
         ));
         let this = self.clone();
-        imp.environment_pill.connect_clicked(glib::clone!(
+        imp.header.environment_pill.connect_clicked(glib::clone!(
             #[weak]
             this,
             move |_| this.present_environment_dialog()
         ));
         let this = self.clone();
-        imp.nav_list.connect_row_selected(glib::clone!(
+        imp.sidebar.list.connect_row_selected(glib::clone!(
             #[weak]
             this,
             move |_, row| {
@@ -714,17 +589,19 @@ impl MainWindow {
         ));
     }
 
-    /// 权威轮次的设备刷新（§4.1：Linux sysfs 扫描）。
+    /// 会话收尾的权威轮次设备刷新（§4.1：Linux sysfs 扫描；§3.3：会话收尾后必须重新
+    /// 读取设备态再裁决呈现）。
     ///
-    /// 同步取数并强制呈现（启动与会话收尾 §3.3：会话收尾后必须重新读取设备态再裁决
-    /// 呈现）；扫描阶段的失败只记诊断（呈现码进诊断导出）——设备分组空态与侧边栏平台
-    /// 说明已给出路，结果区留给用户触发的作业呈现（与周期轮次同口径）。
+    /// 同步取数并强制呈现，同轮投递环境自检（与监控轮次同口径）；扫描阶段的失败只记
+    /// 诊断（呈现码进诊断导出）——设备分组空态与侧边栏平台说明已给出路，结果区留给
+    /// 用户触发的作业呈现（与周期轮次同口径）。
     fn refresh_devices(&self) {
         self.show_platform_notice();
         let outcome = jobs::fetch_scan();
         if let Some(error) = &outcome.error {
             diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
         }
+        self.apply_environment_event(EnvironmentEvent::CheckDone(outcome.env.clone()));
         self.apply_scan(&outcome, true);
     }
 
@@ -736,9 +613,9 @@ impl MainWindow {
         let in_flight = !authoritative && jobs::any_job_in_flight();
         let identity = outcome.hits.first().map(|hit| hit.job.identity);
         let action = {
-            let mut state = self.state().borrow_mut();
-            let (next, action) = state.rescan.observe(identity, in_flight);
-            state.rescan = next;
+            let mut rescan = self.imp().rescan.borrow_mut();
+            let (next, action) = rescan.observe(identity, in_flight);
+            *rescan = next;
             action
         };
         match action {
@@ -747,35 +624,40 @@ impl MainWindow {
                 let Some(hit) = outcome.hits.first() else {
                     return;
                 };
-                self.state().borrow_mut().device = Some(hit.job.clone());
+                self.imp().job.borrow_mut().device = Some(hit.job.clone());
                 self.show_hit(hit);
                 self.refresh_actions();
             }
             RescanAction::ShowEmpty => {
-                self.state().borrow_mut().device = None;
+                self.imp().job.borrow_mut().device = None;
                 self.show_unknown_device();
                 self.refresh_actions();
             }
         }
     }
 
-    /// 设备热插拔监控装配（§4.1 REQ-001）：工作线程周期重扫，结果经 `async_channel`
-    /// 回主线程 `MainContext` 消费（与作业事件同一通道形态）；GTK 侧只做装配。
+    /// 设备热插拔监控装配（§4.1 REQ-001）：工作线程周期重扫（首轮立即），结果经
+    /// `async_channel` 回主线程 `MainContext` 消费（与作业事件同一通道形态）；GTK 侧
+    /// 只做装配。首轮为权威轮（启动扫描与环境自检由此异步送达），此后为周期轮；每轮
+    /// 先投递同轮环境自检，再裁决设备呈现。
     fn spawn_device_watch(&self) {
         let (sender, receiver) = async_channel::unbounded::<jobs::ScanOutcome>();
         if let Err(error) = jobs::spawn_scan_watch(sender) {
-            // 监控线程创建失败与扫描失败同口径呈现（§5）；启动扫描仍已完成。
+            // 监控线程创建失败与扫描失败同口径呈现（§5）；此时无重扫来源，仅呈现错误。
             self.show_error(&error);
             return;
         }
         let this = self.clone();
+        let mut first = true;
         glib::MainContext::default().spawn_local(async move {
             while let Ok(outcome) = receiver.recv().await {
                 if let Some(error) = &outcome.error {
                     // 周期轮次的扫描失败不进结果区（结果区属于作业呈现），只记诊断。
                     diagnostics::ring().record(Level::Warn, presentation::presentation_code(error));
                 }
-                this.apply_scan(&outcome, false);
+                this.apply_environment_event(EnvironmentEvent::CheckDone(outcome.env.clone()));
+                this.apply_scan(&outcome, first);
+                first = false;
             }
         });
     }
@@ -793,213 +675,39 @@ impl MainWindow {
         }
     }
 
+
     /// 按当前状态刷新入口（设备态与重试预算的两个来源在此汇合）。
     fn refresh_actions(&self) {
         let (identity, gate) = {
-            let state = self.state().borrow();
+            let job = self.imp().job.borrow();
             (
-                state
-                    .device
+                job.device
                     .as_ref()
-                    .map(|job| job.identity)
+                    .map(|device| device.identity)
                     .unwrap_or(DeviceIdentity::Unrecognized),
-                state.gate,
+                job.gate,
             )
         };
         self.apply_actions(identity, &gate);
-    }
-
-    /// 设备分组（§4.12：产品名、VID:PID、设备节点、传输通道、描述符摘要与锁定徽章）。
-    fn show_hit(&self, hit: &ScanHit) {
-        let imp = self.imp();
-        // relocalize 重放缓存：语言切换后按新语言重放设备分组文案。
-        self.state().borrow_mut().last_hit = Some(hit.clone());
-        imp.device_row.set_title(&t!("device.model"));
-        let ids = format!(
-            "{} {:04x}:{:04x}",
-            t!("device.vid_pid"),
-            hit.job.vid,
-            hit.job.pid
-        );
-        imp.device_row.set_subtitle(ids.as_str());
-        imp.status_label
-            .set_label(&t!(hit.job.identity.status_key()));
-        self.set_badge_class(hit.job.identity);
-        imp.badge_box.set_visible(true);
-        let node = match &hit.job.node {
-            Some(node) => node.to_string(),
-            None => String::new(),
-        };
-        imp.node_row.set_subtitle(node.as_str());
-        imp.channel_row.set_subtitle(t!("device.channel").as_ref());
-        imp.descriptor_row
-            .set_subtitle(hit.descriptor.as_deref().unwrap_or(""));
-        for row in [&imp.node_row, &imp.channel_row, &imp.descriptor_row] {
-            row.set_visible(true);
-        }
-    }
-
-    /// 设备分组空态（§4.1：不识别为 T7 Shield，入口保持禁用）。
-    fn show_unknown_device(&self) {
-        let imp = self.imp();
-        // 空态与设备分组互斥：清除重放缓存，relocalize 才会重放空态而不是陈旧设备行。
-        self.state().borrow_mut().last_hit = None;
-        imp.device_row
-            .set_title(&t!(DeviceIdentity::Unrecognized.status_key()));
-        imp.device_row
-            .set_subtitle(t!("device.empty_hint").as_ref());
-        imp.status_label
-            .set_label(&t!(DeviceIdentity::Unrecognized.status_key()));
-        self.set_badge_class(DeviceIdentity::Unrecognized);
-        // 空态行标题已是「未发现 T7 Shield」，徽章不再重复呈现。
-        imp.badge_box.set_visible(false);
-        for row in [&imp.node_row, &imp.channel_row, &imp.descriptor_row] {
-            row.set_subtitle("");
-            row.set_visible(false);
-        }
-    }
-
-    /// 状态徽章配色（锁定态醒目暖色、解锁态绿色、其余中性）。
-    fn set_badge_class(&self, identity: DeviceIdentity) {
-        let imp = self.imp();
-        for class in ["warning", "success", "dim-label"] {
-            imp.status_label.remove_css_class(class);
-            imp.status_icon.remove_css_class(class);
-        }
-        let class = badge_class(identity);
-        imp.status_label.add_css_class(class);
-        imp.status_icon.add_css_class(class);
-        imp.status_icon.set_icon_name(Some(status_icon_name(identity)));
-    }
-
-    /// 平台说明文案（D27：Linux 通道说明；置于关于页「运行环境」分组）。
-    pub fn show_platform_notice(&self) {
-        let text = t!("platform.linux_notice").to_string();
-        self.imp().platform_row.set_subtitle(text.as_str());
-    }
-
-    /// 进度条与步骤文案（§4.13：7 个 `UnlockStep`）。
-    pub fn show_step(&self, step: UnlockStep) {
-        let imp = self.imp();
-        let total = UnlockStep::ALL.len() as f64;
-        let done = UnlockStep::ALL
-            .iter()
-            .position(|candidate| *candidate == step)
-            .map(|index| (index + 1) as f64)
-            .unwrap_or(0.0);
-        // 步骤文案先摘旧结果语义（上一次成功/错误的着色与图标不得残留），
-        // 再显示进度区并写步骤文案（不走 show_outcome——那会隐藏进度区）。
-        for class in ["success", "error", "dim-label"] {
-            imp.result_label.remove_css_class(class);
-        }
-        imp.result_icon.set_visible(false);
-        imp.feedback_group.set_visible(true);
-        imp.result_row.set_visible(true);
-        imp.progress_box.set_visible(true);
-        imp.progress.set_fraction(done / total);
-        imp.result_label.set_label(&t!(format!("progress.{step}")));
-    }
-
-    /// 结果区统一呈现（§4.12/§6）：文本 + 语义类 + 图标；进度条随结果/错误隐藏。
-    pub(crate) fn show_outcome(&self, text: &str, kind: Outcome) {
-        let imp = self.imp();
-        for class in ["success", "error", "dim-label"] {
-            imp.result_label.remove_css_class(class);
-            imp.result_icon.remove_css_class(class);
-        }
-        imp.feedback_group.set_visible(true);
-        imp.result_row.set_visible(true);
-        imp.result_label.set_label(text);
-        match kind {
-            Outcome::Neutral => {
-                imp.result_label.add_css_class("dim-label");
-                imp.result_icon.set_visible(false);
-            }
-            Outcome::Success => {
-                imp.result_label.add_css_class("success");
-                imp.result_icon.add_css_class("success");
-                imp.result_icon.set_icon_name(Some("emblem-ok-symbolic"));
-                imp.result_icon.set_visible(true);
-                // 成功结果附 Toast 瞬时提示（libadwaita 特色）。
-                imp.toast_overlay.add_toast(adw::Toast::new(text));
-            }
-            Outcome::Error => {
-                imp.result_label.add_css_class("error");
-                imp.result_icon.add_css_class("error");
-                imp.result_icon.set_icon_name(Some("dialog-warning-symbolic"));
-                imp.result_icon.set_visible(true);
-            }
-        }
-        imp.progress.set_fraction(0.0);
-        imp.progress_box.set_visible(false);
-    }
-
-    /// 空闲态：隐藏结果区（无进度 / 无结果 / 无错误时不占版面）。
-    pub(crate) fn hide_outcome(&self) {
-        let imp = self.imp();
-        for class in ["success", "error", "dim-label"] {
-            imp.result_label.remove_css_class(class);
-            imp.result_icon.remove_css_class(class);
-        }
-        imp.result_icon.set_visible(false);
-        imp.result_row.set_visible(false);
-        imp.progress.set_fraction(0.0);
-        imp.progress_box.set_visible(false);
-        // 无进度 / 无结果时不保留空分组（标题悬空是主要的空荡感来源）。
-        imp.feedback_group.set_visible(false);
-    }
-
-    /// 结果文案（§4.8 判据分级 / 取消 / 校验结论）。
-    pub fn show_result(&self, message_key: &'static str) {
-        // relocalize 重放缓存（success/neutral 均记；重放时重复写同一值，幂等无害）。
-        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Result(message_key));
-        self.show_outcome(&t!(message_key), result_kind(message_key));
-    }
-
-    /// 错误呈现：呈现码 + 一句原因 + 一句建议（§4.13）。
-    pub fn show_error(&self, error: &AppError) -> String {
-        // relocalize 重放缓存（错误经呈现码/原因/建议键重放）。
-        self.state().borrow_mut().last_outcome = Some(StoredOutcome::Error(error.clone()));
-        let code = presentation::presentation_code(error);
-        let text = format!(
-            "{code}：{}；{}",
-            t!(presentation::reason_key(error)),
-            t!(presentation::advice_key(error)),
-        );
-        self.show_outcome(&text, Outcome::Error);
-        diagnostics::ring().record(Level::Error, code);
-        text
-    }
-
-    /// 窗口运行期状态（设备、闸门、取消标志与在飞动作）。
-    fn state(&self) -> &RefCell<WindowState> {
-        &self.imp().state
     }
 
     /// 切换页面并同步导航选中态（选中唯一性由 `GtkListBox` 原生选中机制保证）。
     fn show_page(&self, item: NavItem) {
         let imp = self.imp();
         imp.content_stack.set_visible_child_name(item.page_name());
-        imp.window_title.set_title(&t!(item.label_key()));
+        imp.header.window_title.set_title(&t!(item.label_key()));
         let index = NavItem::ALL
             .iter()
             .position(|candidate| *candidate == item)
             .expect("NavItem 必须在 ALL 中") as i32;
-        if let Some(row) = imp.nav_list.row_at_index(index) {
+        if let Some(row) = imp.sidebar.list.row_at_index(index) {
             if !row.is_selected() {
-                imp.nav_list.select_row(Some(&row));
+                imp.sidebar.list.select_row(Some(&row));
             }
         }
         if item == NavItem::Diagnostics {
             self.refresh_diagnostics_view();
         }
-    }
-
-    /// 诊断页内容：环形缓冲的脱敏导出文本（只读、不可编辑）。
-    fn refresh_diagnostics_view(&self) {
-        let text = diagnostics::ring().export_redacted();
-        let buffer = self.imp().diagnostics_view.buffer();
-        buffer.set_text(&text);
     }
 
     /// 打开设置对话框（D28）：装入当前设置快照；更改即时生效并回写本窗口。
@@ -1009,129 +717,15 @@ impl MainWindow {
         dialog.present(Some(self));
     }
 
-    /// 环境就绪引导装配（§4.13）：启动自检 → 状态机裁决 → 胶囊/装载动作。
-    fn start_environment_bootstrap(&self) {
-        let report = environment::inspect_environment();
-        self.apply_environment_event(EnvironmentEvent::CheckDone(report));
-    }
-
-    /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（胶囊显隐 / 工作线程装载）。
-    fn apply_environment_event(&self, event: EnvironmentEvent) {
-        let is_user_retry = matches!(event, EnvironmentEvent::LoadRequested);
-        let (next, action) = {
-            let mut state = self.state().borrow_mut();
-            let (next, action) = next_environment_state(state.environment.clone(), event);
-            state.environment = next.clone();
-            (next, action)
-        };
-        let action = match action {
-            // 纪律：自动装载（启动自检路径）每次启动至多一次；用户在向导中的
-            // 显式重试不受限。复检路径再次产出装载动作时转为呈现问题。
-            EnvironmentAction::LoadModule if !is_user_retry => {
-                let mut state = self.state().borrow_mut();
-                if state.auto_load_used {
-                    if let EnvironmentState::Loading(issues) = &next {
-                        state.environment = EnvironmentState::Issue(issues.clone());
-                    }
-                    EnvironmentAction::ShowPill
-                } else {
-                    state.auto_load_used = true;
-                    EnvironmentAction::LoadModule
-                }
-            }
-            other => other,
-        };
-        match action {
-            EnvironmentAction::None => {}
-            EnvironmentAction::ShowPill => self.imp().environment_pill.set_visible(true),
-            EnvironmentAction::HidePill => self.imp().environment_pill.set_visible(false),
-            EnvironmentAction::LoadModule => self.spawn_module_load(),
-        }
-        self.refresh_environment_dialog();
-    }
-
-    /// 模块装载（§4.13）：固定命令 `pkexec modprobe sg` 在工作线程执行（单飞由
-    /// 状态机保证：Loading 态拒绝并发 LoadRequested）；结果回主线程复检一轮。
-    fn spawn_module_load(&self) {
-        let (sender, receiver) = async_channel::unbounded::<bool>();
-        std::thread::spawn(move || {
-            let argv = environment::module_load_command();
-            let ok = std::process::Command::new(argv[0])
-                .args(&argv[1..])
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
-            let _ = sender.send_blocking(ok);
-        });
-        let this = self.clone();
-        glib::MainContext::default().spawn_local(async move {
-            if let Ok(ok) = receiver.recv().await {
-                this.apply_environment_event(if ok {
-                    EnvironmentEvent::LoadSucceeded
-                } else {
-                    EnvironmentEvent::LoadFailed
-                });
-                // 收尾后统一复检：成功 → Ready；失败 → 问题清单刷新（仍是 Issue/LoadFailed）。
-                let report = environment::inspect_environment();
-                this.apply_environment_event(EnvironmentEvent::CheckDone(report));
-            }
-        });
-    }
-
-    /// 当前问题清单与装载在飞标记的呈现快照。
-    fn environment_snapshot(&self) -> (Vec<environment::EnvironmentIssue>, bool) {
-        let state = self.state().borrow();
-        match &state.environment {
-            EnvironmentState::Issue(issues) | EnvironmentState::LoadFailed(issues) => {
-                (issues.clone(), false)
-            }
-            EnvironmentState::Loading(issues) => (issues.clone(), true),
-            _ => (Vec::new(), false),
-        }
-    }
-
-    /// 打开引导向导（D30）：问题清单快照 + 装载状态；迁移时经弱引用刷新。
-    fn present_environment_dialog(&self) {
-        let (issues, loading) = self.environment_snapshot();
-        let dialog = EnvironmentDialog::new(self, &issues, loading);
-        self.state().borrow_mut().open_environment_dialog = Some(dialog.downgrade());
-        dialog.present(Some(self));
-    }
-
-    /// 向导打开期间的状态迁移刷新（§4.13）。
-    fn refresh_environment_dialog(&self) {
-        let dialog = self
-            .state()
-            .borrow()
-            .open_environment_dialog
-            .as_ref()
-            .and_then(|weak| weak.upgrade());
-        if let Some(dialog) = dialog {
-            let (issues, loading) = self.environment_snapshot();
-            dialog.reload(&issues, loading);
-        }
-    }
-
-    /// 引导向导「装载内核模块」入口（§4.13：用户显式触发，单飞由状态机兜底）。
-    pub fn environment_load_requested(&self) {
-        self.apply_environment_event(EnvironmentEvent::LoadRequested);
-    }
-
-    /// 引导向导「重新检查」入口（§4.13）。
-    pub fn environment_recheck_requested(&self) {
-        let report = environment::inspect_environment();
-        self.apply_environment_event(EnvironmentEvent::CheckDone(report));
-    }
-
     /// 入口行（按 `ActionId` 取操作分组的 `AdwButtonRow`）。
     pub fn action_row(&self, action: ActionId) -> Option<adw::ButtonRow> {
         let imp = self.imp();
         Some(match action {
-            ActionId::Unlock => imp.action_unlock.clone(),
-            ActionId::ValidatePassword => imp.action_validate_password.clone(),
-            ActionId::SetPassword => imp.action_set_password.clone(),
-            ActionId::ChangePassword => imp.action_change_password.clone(),
-            ActionId::DeletePassword => imp.action_delete_password.clone(),
+            ActionId::Unlock => imp.dashboard.action_unlock.clone(),
+            ActionId::ValidatePassword => imp.dashboard.action_validate_password.clone(),
+            ActionId::SetPassword => imp.dashboard.action_set_password.clone(),
+            ActionId::ChangePassword => imp.dashboard.action_change_password.clone(),
+            ActionId::DeletePassword => imp.dashboard.action_delete_password.clone(),
         })
     }
 
@@ -1140,14 +734,9 @@ impl MainWindow {
         match action {
             ActionId::Unlock | ActionId::ValidatePassword => self.prompt_password(action),
             // §4.11：写口令入口受证据缺口约束；程序化触发也必须立即返回、不下发任何命令。
-            ActionId::SetPassword | ActionId::ChangePassword => {
-                self.show_error(&AppError::from(
-                    magi_protocol::set_password(&[]).expect_err("口令写操作不可执行"),
-                ));
-            }
-            ActionId::DeletePassword => {
-                self.show_error(&AppError::from(
-                    magi_protocol::delete_password(&[]).expect_err("口令写操作不可执行"),
+            ActionId::SetPassword | ActionId::ChangePassword | ActionId::DeletePassword => {
+                self.show_error(&AppError::Protocol(
+                    magi_protocol::ProtocolError::PasswordOperationUnspecified,
                 ));
             }
         }
@@ -1156,66 +745,53 @@ impl MainWindow {
     /// 口令对话框 → 提交后启动作业（§4.12：提交即清零、对话框关闭并清除输入）。
     fn prompt_password(&self, action: ActionId) {
         // §6：重新打开对话框 → 本会话的口令重试预算复位。
-        self.state().borrow_mut().gate.open_dialog();
+        self.imp().job.borrow_mut().gate.open_dialog();
         let dialog = PasswordDialog::new(action);
         // relocalize 联动缓存：语言切换时同步重渲染打开中的对话框（弱引用，不阻止回收）。
-        self.state().borrow_mut().open_dialog = Some(dialog.downgrade());
+        self.imp().dialogs.borrow_mut().password = Some(dialog.downgrade());
         let this = self.clone();
-        dialog.submit_button().connect_clicked(glib::clone!(
-            #[weak]
-            this,
-            #[weak]
-            dialog,
-            move |_| {
-                let password = match dialog.take_password() {
-                    Ok(password) => password,
-                    Err(error) => {
-                        // §4.12：空口令就地提示、对话框保持打开、不构造任何报文。
-                        dialog.show_error(&error);
-                        return;
-                    }
-                };
-                dialog.close();
-                this.start_job(action, password);
-            }
-        ));
-        dialog.cancel_button().connect_clicked(glib::clone!(
-            #[weak]
-            dialog,
-            move |_| {
-                dialog.close();
-            }
-        ));
+        dialog.connect_submit(move |password| this.start_job(action, password));
         dialog.present(Some(self));
     }
 
     /// 启动一次设备作业（§4.13：工作线程执行、事件回主线程；同设备单飞）。
     fn start_job(&self, action: ActionId, password: Password) {
-        let Some(job) = self.state().borrow().device.clone() else {
+        let Some(job) = self.imp().job.borrow().device.clone() else {
             self.show_result(DeviceIdentity::Unrecognized.status_key());
             return;
         };
         let cancel = CancelFlag::new();
         {
-            let mut state = self.state().borrow_mut();
-            state.cancel = cancel.clone();
-            state.action = Some(action);
+            let mut job = self.imp().job.borrow_mut();
+            job.cancel = cancel.clone();
+            job.action = Some(action);
         }
         diagnostics::ring().record(Level::Info, action.label_key());
-        let spawned = jobs::spawn_device_job(job.device.clone(), move |emit| match action {
+        match jobs::spawn_device_job(job.device.clone(), move |emit| match action {
             ActionId::Unlock => jobs::unlock_device(&job, password, &cancel, emit),
             _ => jobs::validate_password(&job, password, emit),
-        });
-        if let Err(error) = spawned {
-            // §4.13：同设备已有在飞操作 → `Busy`（命令队列上限 1，不排队）。
-            self.show_error(&error);
+        }) {
+            Ok(receiver) => {
+                // 事件消费窗口自持：闭包持有发起作业的窗口克隆，事件直达该窗口；
+                // 不经过全局事件汇，多次装配主窗口也不会把事件路由到旧窗口闭包。
+                let this = self.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    while let Ok(event) = receiver.recv().await {
+                        this.on_event(event);
+                    }
+                });
+            }
+            Err(error) => {
+                // §4.13：同设备已有在飞操作 → `Busy`（命令队列上限 1，不排队）。
+                self.show_error(&error);
+            }
         }
         self.refresh_actions();
     }
 
     /// 取消当前作业（§6：只停止后续步骤，不阻塞退出）。
     fn cancel_current(&self) {
-        let cancel = self.state().borrow().cancel.clone();
+        let cancel = self.imp().job.borrow().cancel.clone();
         cancel.cancel();
     }
 
@@ -1231,10 +807,8 @@ impl MainWindow {
     /// 收尾：按解锁判据分级呈现；取消优先于判据（§6）。
     fn finish(&self, evidence: Option<UnlockEvidence>) {
         let (action, cancelled) = {
-            let state = self.state().borrow();
-            let action = state.action;
-            let cancelled = state.cancel.cancelled();
-            (action, cancelled)
+            let job = self.imp().job.borrow();
+            (job.action, job.cancel.cancelled())
         };
         if cancelled {
             diagnostics::ring().record(Level::Info, "result.cancelled");
@@ -1255,7 +829,7 @@ impl MainWindow {
                 self.show_result(key);
             } else {
                 // relocalize 重放缓存：挂载点参数不走固定结果键，单独缓存。
-                self.state().borrow_mut().last_outcome =
+                self.imp().replay.borrow_mut().last_outcome =
                     Some(StoredOutcome::Mounted(mounted.clone()));
                 let text = format!(
                     "{} {}",
@@ -1272,7 +846,7 @@ impl MainWindow {
     /// 失败：记录口令被拒次数（§6：最多 3 次）并按呈现码呈现。
     fn fail(&self, error: AppError) {
         if error == AppError::PasswordRejected {
-            self.state().borrow_mut().gate.record_rejection();
+            self.imp().job.borrow_mut().gate.record_rejection();
         }
         self.show_error(&error);
         self.refresh_actions();
@@ -1315,55 +889,10 @@ impl MainWindow {
     /// 语言切换后重设全部静态文案并重放动态呈现（D28：切换即时生效）。
     pub fn relocalize(&self) {
         let imp = self.imp();
-        imp.sidebar_title.set_label(&t!("app.title"));
-        imp.window_title.set_title(&t!(NavItem::Dashboard.label_key()));
-        for (label, item) in imp.nav_labels.iter().zip(NavItem::ALL) {
-            label.set_label(&t!(item.label_key()));
-        }
-        imp.device_group.set_title(&t!("device.group_title"));
-        imp.actions_group.set_title(&t!("dashboard.actions_title"));
-        imp.actions_group
-            .set_description(Some(&t!("reason.evidence_gap")));
-        imp.feedback_group
-            .set_title(&t!("dashboard.feedback_title"));
-        imp.node_row.set_title(&t!("device.node"));
-        imp.channel_row.set_title(&t!("device.channel_title"));
-        imp.descriptor_row.set_title(&t!("device.descriptor_title"));
-        imp.diagnostics_group
-            .set_title(&t!("diagnostics.view_title"));
-        imp.diagnostics_group
-            .set_description(Some(&t!("diagnostics.hint")));
-        imp.about_group.set_title(&t!(NavItem::About.label_key()));
-        imp.about_group
-            .set_description(Some(&t!("about.notice")));
-        imp.about_version_row.set_title(&t!("about.version_title"));
-        imp.about_device_row.set_title(&t!("about.device_title"));
-        imp.about_repository_row
-            .set_title(&t!("about.repository_title"));
-        imp.platform_group
-            .set_title(&t!("about.platform_title"));
-        imp.about_device_row.set_subtitle(t!("app.subtitle").as_ref());
-        imp.about_repository_row
-            .set_subtitle(t!("about.repository").as_ref());
-        for action in ActionId::ALL {
-            if let Some(row) = self.action_row(action) {
-                row.set_title(&t!(action.label_key()));
-            }
-        }
-        imp.action_export_diagnostics
-            .set_title(&t!("action.export_diagnostics"));
-        imp.action_cancel.set_label(&t!("action.cancel"));
-        imp.action_preferences
-            .set_tooltip_text(Some(&t!("action.preferences")));
-        imp.environment_pill
-            .set_label(&t!("environment.pill_label"));
-        imp.environment_pill
-            .set_tooltip_text(Some(&t!("environment.pill_tooltip")));
-        imp.sidebar_toggle
-            .set_tooltip_text(Some(&t!("nav.toggle_sidebar")));
+        self.apply_static_texts();
         // 设备分组重放：有缓存命中按新语言重渲染（不走 refresh_devices——
         // RescanState 身份不变时返回 Keep，不会重刷文案）。
-        let last_hit = self.state().borrow().last_hit.clone();
+        let last_hit = self.imp().replay.borrow().last_hit.clone();
         match last_hit {
             Some(hit) => self.show_hit(&hit),
             None => self.show_unknown_device(),
@@ -1371,7 +900,7 @@ impl MainWindow {
         self.show_platform_notice();
         self.refresh_actions();
         // 结果区重放。
-        let last_outcome = self.state().borrow().last_outcome.clone();
+        let last_outcome = self.imp().replay.borrow().last_outcome.clone();
         match last_outcome {
             Some(StoredOutcome::Result(key)) => self.show_result(key),
             Some(StoredOutcome::Mounted(volumes)) => {
@@ -1392,18 +921,20 @@ impl MainWindow {
             self.refresh_diagnostics_view();
         }
         let dialog = self
-            .state()
+            .imp()
+            .dialogs
             .borrow()
-            .open_dialog
+            .password
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = dialog {
             dialog.relocalize();
         }
         let env_dialog = self
-            .state()
+            .imp()
+            .dialogs
             .borrow()
-            .open_environment_dialog
+            .environment
             .as_ref()
             .and_then(|weak| weak.upgrade());
         if let Some(dialog) = env_dialog {
@@ -1457,10 +988,10 @@ mod tests {
         }
         let window = MainWindow::new();
         let imp = window.imp();
-        let row_count = nav_row_count(&imp.nav_list);
+        let row_count = nav_row_count(&imp.sidebar.list);
         assert!(row_count >= 3, "导航项至少 3 项，实际 {row_count}");
         assert!(
-            imp.nav_list.has_css_class("navigation-sidebar"),
+            imp.sidebar.list.has_css_class("navigation-sidebar"),
             "侧边栏导航必须用内置 navigation-sidebar 类"
         );
         for item in NavItem::ALL {
@@ -1473,7 +1004,7 @@ mod tests {
             );
         }
         let selected = (0..row_count)
-            .filter_map(|index| imp.nav_list.row_at_index(index))
+            .filter_map(|index| imp.sidebar.list.row_at_index(index))
             .filter(|row| row.is_selected())
             .count();
         assert_eq!(selected, 1, "任一时刻选中项必须恰 1 个");
@@ -1490,7 +1021,7 @@ mod tests {
 
     /// 锚点（§10）：窗口默认尺寸随工作区推导、含上下限（D31）。
     #[test]
-    fn test_window_size_scales_with_workarea() {
+    fn test_window_size_scales_with_display() {
         // 单调：更大的工作区给出更大的默认窗口。
         let small = compute_default_size((1366, 768));
         let medium = compute_default_size((1920, 1080));
@@ -1517,20 +1048,20 @@ mod tests {
         let imp = window.imp();
         // 警示色 = warning 调色（libadwaita 内置类）+ suggested-action 背景。
         assert!(
-            imp.environment_pill.has_css_class("warning"),
+            imp.header.environment_pill.has_css_class("warning"),
             "环境胶囊必须挂 warning 警示类"
         );
         assert!(
-            imp.environment_pill.has_css_class("suggested-action"),
+            imp.header.environment_pill.has_css_class("suggested-action"),
             "环境胶囊必须挂 suggested-action 背景类"
         );
         // 初始环境态 Unknown：胶囊不呈现（就绪口径同样隐藏）。
         assert!(
-            !imp.environment_pill.is_visible(),
+            !imp.header.environment_pill.is_visible(),
             "环境未发现问题时胶囊必须隐藏"
         );
         assert!(
-            imp.environment_pill
+            imp.header.environment_pill
                 .label()
                 .is_some_and(|label| !label.is_empty()),
             "胶囊文案必须经 i18n 键装配"
@@ -1601,12 +1132,12 @@ mod tests {
         let window = MainWindow::new();
         let imp = window.imp();
         // D29：界面由代码构建的 libadwaita 标准组件承载。
-        assert_eq!(imp.device_group.type_().name(), "AdwPreferencesGroup");
-        assert_eq!(imp.device_row.type_().name(), "AdwActionRow");
-        assert_eq!(imp.status_label.type_().name(), "GtkLabel");
-        assert_eq!(imp.action_unlock.type_().name(), "AdwButtonRow");
-        assert_eq!(imp.progress.type_().name(), "GtkProgressBar");
-        assert_eq!(imp.result_label.type_().name(), "GtkLabel");
+        assert_eq!(imp.dashboard.device_group.type_().name(), "AdwPreferencesGroup");
+        assert_eq!(imp.dashboard.device_row.type_().name(), "AdwActionRow");
+        assert_eq!(imp.dashboard.status_label.type_().name(), "GtkLabel");
+        assert_eq!(imp.dashboard.action_unlock.type_().name(), "AdwButtonRow");
+        assert_eq!(imp.dashboard.progress.type_().name(), "GtkProgressBar");
+        assert_eq!(imp.dashboard.result_label.type_().name(), "GtkLabel");
 
         // 启动态：设备未识别 → 全部入口禁用（§4.1）。
         for action in ActionId::ALL {
@@ -1675,20 +1206,20 @@ mod tests {
         // 先呈现一次成功结果（success 着色 + emblem-ok 图标）。
         window.show_result("result.RealPartitionTable");
         let imp = window.imp();
-        assert!(imp.result_label.has_css_class("success"));
-        assert!(imp.result_icon.is_visible());
+        assert!(imp.dashboard.result_label.has_css_class("success"));
+        assert!(imp.dashboard.result_icon.is_visible());
         // 再进入下一次作业的步骤呈现：旧语义必须被摘除。
         window.show_step(UnlockStep::ALL[0]);
         for class in ["success", "error", "dim-label"] {
             assert!(
-                !imp.result_label.has_css_class(class),
+                !imp.dashboard.result_label.has_css_class(class),
                 "步骤文案不得残留 {class}"
             );
         }
-        assert!(!imp.result_icon.is_visible());
-        assert!(imp.progress_box.is_visible());
+        assert!(!imp.dashboard.result_icon.is_visible());
+        assert!(imp.dashboard.progress_box.is_visible());
         assert_eq!(
-            imp.result_label.label(),
+            imp.dashboard.result_label.label(),
             t!(format!("progress.{}", UnlockStep::ALL[0])).to_string()
         );
     }

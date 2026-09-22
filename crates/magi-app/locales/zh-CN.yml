@@ -89,7 +89,7 @@ password:
   cancel: "取消"
   empty: "请输入密码"
 platform:
-  linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。如遇权限不足，请自行授予设备节点的读写权限（本工具不会请求管理员权限）。"
+  linux_notice: "本工具通过 Linux 的 SCSI 通用接口与设备通信。运行环境缺失（内核模块、设备权限）时，会弹出系统授权窗口，向你索要管理员密码进行修复；也可以按引导向导中的手动指引自行处理。"
 environment:
   pill_label: "环境问题"
   pill_tooltip: "运行环境未就绪：点击查看引导向导"
@@ -98,12 +98,13 @@ environment:
   issue_module_title: "内核 sg 模块未装载"
   issue_module_advice: "点击「装载内核模块」经系统授权装载（需要管理员密码）；也可以手动执行 sudo modprobe sg 后重新检查。"
   issue_permission_title: "设备节点不可读写：%{node}"
-  issue_permission_advice: "请将当前用户加入 disk 用户组，或配置 udev 规则授予 /dev/sg* 读写权限；本工具不会自行提权。"
+  issue_permission_advice: "点击「修复设备权限」立即授予本设备读写（需管理员密码；不落任何系统配置，重插或重启后如再受限，重新修复即可）；也可手动执行 sudo setfacl -m u:$USER:rw /dev/sg*。"
   action_load: "装载内核模块"
   action_load_busy: "正在装载…"
+  action_fix: "修复设备权限"
+  action_fix_busy: "正在修复…"
   action_recheck: "重新检查"
   empty: "未发现问题，环境已就绪。"
-issue:
 diagnostics:
   view_title: "诊断日志"
   hint: "记录仅保存在内存中（最多 512 条），不写入磁盘，导出前会再次过滤密码信息。"
