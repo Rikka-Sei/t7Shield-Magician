@@ -21,6 +21,7 @@ pub enum InFlight {
 impl MainWindow {
     /// 环境状态机入口（§4.13）：纯迁移 + 动作落位（一次性纪律由状态机与 env_autos 保证）。
     pub(crate) fn apply_environment_event(&self, event: EnvironmentEvent) {
+        eprintln!("[env] event={:?} state={:?}", event, self.imp().env.borrow().state);
         let action = {
             let mut env = self.imp().env.borrow_mut();
             let (next, action) =
@@ -39,6 +40,7 @@ impl MainWindow {
             environment::EnvironmentAction::LoadModule => self.spawn_module_load(),
             environment::EnvironmentAction::FixPermissions => self.spawn_permission_fix(),
         }
+        eprintln!("[env] action={:?} new_state={:?}", action, self.imp().env.borrow().state);
         self.refresh_environment_dialog();
     }
 
@@ -89,9 +91,17 @@ impl MainWindow {
                 _ => Vec::new(),
             }
         };
-        let Some(argv) =
-            environment::permission_fix_commands(environment::current_user().as_deref(), &nodes)
-        else {
+        let user = environment::current_user();
+        eprintln!(
+            "[env-fix] user={:?} nodes={:?} path_has_setfacl={:?}",
+            user,
+            nodes,
+            std::env::var("PATH").ok().map(|p| p.split(':').any(|d| std::path::Path::new(d).join("setfacl").is_file()))
+        );
+        let argv = environment::permission_fix_commands(user.as_deref(), &nodes);
+        eprintln!("[env-fix] argv={:?}", argv);
+        let Some(argv) = argv else {
+            eprintln!("[env-fix] 前置不满足，走 FixPermissionsFailed");
             self.apply_environment_event(EnvironmentEvent::FixPermissionsFailed);
             return;
         };
@@ -100,7 +110,10 @@ impl MainWindow {
             let ok = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
                 .status()
-                .map(|status| status.success())
+                .map(|status| {
+                    eprintln!("[env-fix] pkexec exit={:?}", status.code());
+                    status.success()
+                })
                 .unwrap_or(false);
             let _ = sender.send_blocking(ok);
         });
